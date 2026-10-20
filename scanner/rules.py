@@ -1,6 +1,11 @@
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Union
-from scanner.models import EnvClassification, Environment, Finding
+from scanner.models import EnvClassification, Environment, Finding, Severity
+
+FIREBASE_OPEN_ACCESS_PATTERN = re.compile(
+    r"allow\s+(?:read\s*,\s*write|write\s*,\s*read)\s*:\s*if\s+true\s*;"
+)
 
 
 def run_rules(
@@ -21,6 +26,7 @@ def run_rules(
         List of Finding objects conforming to the shared contract.
     """
     classifications = classifications or {}
+    project_root = Path(project_root).resolve()
     normalized_classifications: Dict[str, EnvClassification] = {}
 
     for path_str, raw_val in classifications.items():
@@ -40,14 +46,18 @@ def run_rules(
 
     findings: List[Finding] = []
 
-    for file_path in files:
-        # Determine relative path key
-        if file_path.is_absolute() and project_root in file_path.parents:
-            rel_key = file_path.relative_to(project_root).as_posix()
+    for file_item in files:
+        file_path = Path(file_item)
+        if file_path.is_absolute():
+            try:
+                rel_key = file_path.relative_to(project_root).as_posix()
+            except ValueError:
+                rel_key = file_path.as_posix()
+            full_path = file_path
         else:
-            rel_key = Path(file_path).as_posix()
+            rel_key = file_path.as_posix()
+            full_path = project_root / file_path
 
-        # Fallback to unknown if missing classification
         classification = normalized_classifications.get(
             rel_key,
             EnvClassification(
@@ -57,7 +67,25 @@ def run_rules(
             ),
         )
 
-        # In Feature 0, the contract entry point is established.
-        # Future features will evaluate semgrep / regex rules using `classification`.
+        if full_path.suffix == ".rules" or full_path.name.endswith(".rules"):
+            if full_path.is_file():
+                try:
+                    with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                        for line_num, line_text in enumerate(f, start=1):
+                            if FIREBASE_OPEN_ACCESS_PATTERN.search(line_text):
+                                findings.append(
+                                    Finding(
+                                        file=rel_key,
+                                        line=line_num,
+                                        rule_id="firebase-open-access",
+                                        severity=Severity.HIGH,
+                                        message="Insecure Firestore rules: open read and write access granted ('allow read, write: if true;').",
+                                        environment=classification.environment,
+                                        confidence=classification.confidence,
+                                        recommendation="Restrict Firestore access rules by enforcing authentication and authorization checks instead of 'if true;'.",
+                                    )
+                                )
+                except OSError:
+                    continue
 
     return findings

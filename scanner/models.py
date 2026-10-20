@@ -68,22 +68,27 @@ class EnvClassification:
             val = self.environment.strip().lower()
             if val in {e.value for e in Environment}:
                 self.environment = val
-            elif val in {"test", "dev", "development", "local"}:
-                self.environment = Environment.LOCAL_TESTING.value
-            elif val in {"prod", "production"}:
-                self.environment = Environment.PRODUCTION.value
             else:
-                self.environment = Environment.UNKNOWN.value
+                raise ValueError(
+                    f"Invalid environment '{self.environment}'. Must be one of {[e.value for e in Environment]}"
+                )
+        else:
+            raise ValueError(f"Invalid environment type '{type(self.environment)}'. Must be str or Environment enum.")
 
         if isinstance(self.confidence, str):
             conf_str = self.confidence.strip().lower()
             mapping = {"high": 0.9, "medium": 0.5, "low": 0.2}
-            self.confidence = mapping.get(conf_str, 0.0)
+            if conf_str in mapping:
+                self.confidence = mapping[conf_str]
+            else:
+                try:
+                    self.confidence = float(conf_str)
+                except (ValueError, TypeError):
+                    raise ValueError(f"Confidence must be between 0.0 and 1.0, got: {self.confidence}")
+        elif not isinstance(self.confidence, (int, float)) or isinstance(self.confidence, bool):
+            raise ValueError(f"Confidence must be a float between 0.0 and 1.0, got {type(self.confidence).__name__}")
         else:
-            try:
-                self.confidence = float(self.confidence)
-            except (ValueError, TypeError):
-                self.confidence = 0.0
+            self.confidence = float(self.confidence)
 
         if not (0.0 <= self.confidence <= 1.0):
             raise ValueError(f"Confidence must be between 0.0 and 1.0, got: {self.confidence}")
@@ -92,6 +97,19 @@ class EnvClassification:
             self.evidence = [self.evidence]
         elif not isinstance(self.evidence, list):
             self.evidence = list(self.evidence)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "environment": self.environment,
+            "confidence": self.confidence,
+            "evidence": list(self.evidence),
+        }
+
+    def __iter__(self):
+        return iter((self.environment, self.confidence, self.evidence))
+
+    def __getitem__(self, idx):
+        return (self.environment, self.confidence, self.evidence)[idx]
 
 
 @dataclass

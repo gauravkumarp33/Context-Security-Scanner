@@ -217,3 +217,83 @@ def test_env_classification_from_m1_tuple():
     ec_prod = EnvClassification.from_tuple(("production", "high", "Path contains prod"))
     assert ec_prod.environment == "production"
     assert ec_prod.confidence == 0.9
+
+
+def test_run_rules_finds_firestore_rule_at_right_line(tmp_path):
+    """Verify that run_rules detects the firestore open access rule at the exact line."""
+    rules_content = """rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
+"""
+    rules_file = tmp_path / "firestore.rules"
+    rules_file.write_text(rules_content, encoding="utf-8")
+
+    classifications = {
+        "firestore.rules": EnvClassification(
+            environment=Environment.PRODUCTION.value,
+            confidence=0.9,
+            evidence=["Production rules file"],
+        )
+    }
+
+    findings = run_rules(
+        project_root=tmp_path,
+        files=[rules_file],
+        classifications=classifications,
+    )
+
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.file == "firestore.rules"
+    assert f.line == 5
+    assert f.rule_id == "firebase-open-access"
+    assert f.severity == Severity.HIGH
+    assert f.environment == Environment.PRODUCTION
+    assert f.confidence == 0.9
+    assert "allow read, write: if true;" in f.message
+    assert len(f.recommendation) > 0
+
+
+def test_run_rules_finds_firestore_rule_missing_classification_defaults_unknown(tmp_path):
+    """Verify that firestore rule finding receives unknown environment and 0.0 confidence when unclassified."""
+    rules_content = "allow read, write: if true;\n"
+    rules_file = tmp_path / "custom.rules"
+    rules_file.write_text(rules_content, encoding="utf-8")
+
+    findings = run_rules(
+        project_root=tmp_path,
+        files=[rules_file],
+        classifications={},
+    )
+
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.line == 1
+    assert f.environment == Environment.UNKNOWN
+    assert f.confidence == 0.0
+
+
+def test_env_classification_to_dict_and_strict_validation():
+    """Verify EnvClassification to_dict method and strict environment value validation."""
+    ec = EnvClassification(environment="production", confidence=0.85, evidence=["deploy manifest"])
+    assert ec.to_dict() == {
+        "environment": "production",
+        "confidence": 0.85,
+        "evidence": ["deploy manifest"],
+    }
+
+    # Old string mappings should raise ValueError when passed directly
+    with pytest.raises(ValueError, match="Invalid environment"):
+        EnvClassification(environment="test")
+
+    with pytest.raises(ValueError, match="Invalid environment"):
+        EnvClassification(environment="development")
+
+    with pytest.raises(ValueError, match="Invalid environment"):
+        EnvClassification(environment="invalid-env")
+
