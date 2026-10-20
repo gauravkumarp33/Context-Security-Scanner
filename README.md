@@ -24,3 +24,43 @@ Each security finding produced by the scanner adheres to the shared contract spe
 1. **No Secret Leaks:** Raw secret values must never be logged or embedded in `message` or any finding field.
 2. **No Silent Suppression:** An `unknown` environment classification must never silently suppress a finding.
 3. **Single Engine:** All interfaces (VS Code extension, CLI, CI) consume the same Python engine and finding schema.
+
+## Installation & Setup
+
+Install the package locally in editable mode:
+
+```bash
+pip install -e .
+# Or with test dependencies:
+pip install -e .[dev]
+```
+
+## CLI Usage
+
+Run a scan against any project or repository directory:
+
+```bash
+# Output JSON (default format conforming to schema)
+code-security-scanner scan <path-to-project> --format json
+
+# Or invoke directly via Python module
+python -m scanner scan <path-to-project> --format json
+
+# Human-readable terminal output
+code-security-scanner scan <path-to-project> --format human
+
+# Fail with exit code 1 on findings at or above high severity (used in CI)
+code-security-scanner scan <path-to-project> --fail-on high
+
+# Save results to a file
+code-security-scanner scan <path-to-project> --format json -o scan-results.json
+```
+
+### Exit Codes Contract
+
+| Exit Code | Meaning | Description |
+|---|---|---|
+| `0` | Clean / Success | Scan completed successfully; no findings detected or findings below `--fail-on` threshold. |
+| `1` | Blocking Findings | Scan completed successfully, but detected vulnerabilities meeting or exceeding `--fail-on` threshold. |
+| `2` | Scanner Error | Execution failure (e.g., target directory does not exist, bad CLI arguments, tool errors). |
+
