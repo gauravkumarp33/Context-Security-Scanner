@@ -1,0 +1,32 @@
+[
+  {
+    "file": "deploy/k8s/deployment.yaml",
+    "line": 42,
+    "rule_id": "SEC-ENV-001",
+    "severity": "critical",
+    "message": "Hardcoded production API secret key detected in deployment manifest",
+    "environment": "production",
+    "confidence": 0.95,
+    "recommendation": "Migrate the hardcoded secret to a secure secrets manager (e.g., Vault or AWS Secrets Manager) and inject via environment variables."
+  },
+  {
+    "file": "tests/test_auth.py",
+    "line": 15,
+    "rule_id": "SEC-TEST-002",
+    "severity": "low",
+    "message": "Weak mock token or insecure testing credential found in test suite",
+    "environment": "local-testing",
+    "confidence": 0.85,
+    "recommendation": "Ensure test mock credentials are restricted exclusively to test mock servers and not reused in live staging or production."
+  },
+  {
+    "file": "config/service.conf",
+    "line": 8,
+    "rule_id": "SEC-CONF-003",
+    "severity": "high",
+    "message": "Unencrypted communication protocol configured without environment indicators",
+    "environment": "unknown",
+    "confidence": 0.2,
+    "recommendation": "Enforce TLS 1.3 across all communication endpoints and explicitly define the target environment context."
+  }
+]
