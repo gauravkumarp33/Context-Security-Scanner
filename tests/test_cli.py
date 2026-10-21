@@ -64,3 +64,51 @@ def test_cli_runs_clean_project(tmp_path, capsys):
     captured = capsys.readouterr()
     findings = json.loads(captured.out)
     assert findings == []
+
+
+def test_cli_exclude_pattern(tmp_path, capsys):
+    """Verify CLI respects the --exclude argument."""
+    vuln_dir = tmp_path / "fixtures" / "prod"
+    vuln_dir.mkdir(parents=True)
+    (vuln_dir / "firestore.rules").write_text(
+        "service cloud.firestore {\n"
+        "  match /{document=**} {\n"
+        "    allow read, write: if true;\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    # Without exclude, finding is present
+    exit_code = main(["scan", str(tmp_path)])
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    findings = json.loads(captured.out)
+    assert len(findings) == 1
+
+    # With exclude, finding is ignored
+    exit_code_excluded = main(["scan", str(tmp_path), "--exclude", "fixtures/*"])
+    assert exit_code_excluded == 0
+    captured_excluded = capsys.readouterr()
+    findings_excluded = json.loads(captured_excluded.out)
+    assert len(findings_excluded) == 0
+
+
+def test_cli_single_file_scan(tmp_path, capsys):
+    """Verify CLI supports scanning a single file directly (Feature 5)."""
+    single_file = tmp_path / "firestore.rules"
+    single_file.write_text(
+        "service cloud.firestore {\n"
+        "  match /{document=**} {\n"
+        "    allow read, write: if true;\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(["scan", str(single_file)])
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    findings = json.loads(captured.out)
+    assert len(findings) == 1
+    assert findings[0]["file"] == "firestore.rules"

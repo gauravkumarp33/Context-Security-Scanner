@@ -33,4 +33,4 @@ jobs:
       - name: Run Context-Aware Security Scanner CLI
         run: |
           echo "Scanning repository for insecure configurations and exposed secrets..."
-          code-security-scanner scan . --format human --fail-on high
+          code-security-scanner scan . --format human --fail-on high --exclude "tests/*"

@@ -35,6 +35,12 @@ def create_parser() -> argparse.ArgumentParser:
         help="Exit with code 1 if findings at or above this severity are detected",
     )
     scan_parser.add_argument(
+        "--exclude",
+        nargs="*",
+        default=None,
+        help="Patterns or paths to exclude from scanning (e.g. --exclude 'tests/*')",
+    )
+    scan_parser.add_argument(
         "-o",
         "--output",
         help="Optional file path to write scan output to",
@@ -98,7 +104,7 @@ def main(args: Optional[List[str]] = None) -> int:
             return 2
 
         try:
-            findings_objs = scan_project(target_path)
+            findings_objs = scan_project(target_path, exclude=parsed_args.exclude)
             findings_dicts = [f.to_dict() for f in findings_objs]
         except Exception as e:
             sys.stderr.write(f"Scanner Execution Error: {e}\n")
