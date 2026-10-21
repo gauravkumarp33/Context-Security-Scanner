@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
 from scanner.classifier import classify_environment
+from scanner.context import load_project_context
 from scanner.models import EnvClassification, ProjectFile
 
 DEFAULT_EXCLUDED_DIRS = {
@@ -220,7 +221,11 @@ def classify_project(
     """
     Classify environments for all scanned files across a project repository.
     Returns a dictionary of POSIX relative paths to EnvClassification objects,
-    using discover_files so discovery and classification never disagree.
+    using ProjectContext once and discover_files.
     """
     project_files = discover_files(root, exclude=exclude)
-    return {pf.path: classify_environment(pf.path) for pf in project_files}
+    context = load_project_context(root)
+    return {
+        pf.path: classify_environment(pf.path, root=root, context=context)
+        for pf in project_files
+    }

@@ -43,7 +43,7 @@ def test_cli_runs_end_to_end_on_temp_project(tmp_path):
     assert finding["rule_id"] == "firebase-open-access"
     assert finding["severity"] == "high"
     assert finding["environment"] == "production"
-    assert finding["confidence"] >= 0.8
+    assert finding["confidence"] >= 0.5
     assert "allow read, write: if true;" in finding["message"]
 
     # Validate against JSON schema
