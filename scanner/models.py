@@ -194,3 +194,17 @@ class ScanResult:
     status: str
     findings: List[Finding]
     errors: List[str]
+
+
+@dataclass
+class ProjectFile:
+    path: str
+    kind: str
+    size: int
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "path": self.path,
+            "kind": self.kind,
+            "size": self.size,
+        }
