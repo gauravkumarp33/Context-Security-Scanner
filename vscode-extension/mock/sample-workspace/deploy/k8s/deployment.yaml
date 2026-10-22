@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service-prod
+  namespace: production
+  labels:
+    app: auth-service
+    env: production
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+        - name: auth-service
+          image: internal-registry.corp.io/auth:v1.4.2
+          ports:
+            - containerPort: 8080
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+          env:
+            - name: ENVIRONMENT
+              value: "production"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: DATABASE_URL
+              value: "postgres://prod-db.internal:5432/auth"
+            - name: HTTP_PORT
+              value: "8080"
+            - name: APP_NAME
+              value: "auth-service"
+            - name: API_PROD_SECRET_KEY
+              value: "AKIAIOSFODNN7EXAMPLEPRODSECRET"
+            - name: TIMEOUT_SECONDS
+              value: "30"
+            - name: METRICS_ENABLED
+              value: "true"

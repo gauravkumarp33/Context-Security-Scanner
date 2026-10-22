@@ -1,0 +1,94 @@
+{
+  "name": "context-security-scanner",
+  "displayName": "Context Security Scanner",
+  "description": "Context-aware code security scanner VS Code extension",
+  "version": "0.1.0",
+  "publisher": "security-team",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Linters",
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onCommand:security-scanner.scanWorkspace"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "security-scanner.scanWorkspace",
+        "title": "Security Scanner: Scan Workspace",
+        "category": "Security Scanner",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "security-scanner.openFinding",
+        "title": "Open Finding"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "security-scanner-container",
+          "title": "Security Scanner",
+          "icon": "media/shield.svg"
+        }
+      ]
+    },
+    "views": {
+      "security-scanner-container": [
+        {
+          "id": "securityFindings",
+          "name": "Security Findings"
+        }
+      ],
+      "explorer": [
+        {
+          "id": "securityFindingsExplorer",
+          "name": "Security Findings"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "security-scanner.scanWorkspace",
+          "when": "view == securityFindings || view == securityFindingsExplorer",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Security Scanner",
+      "properties": {
+        "securityScanner.provider": {
+          "type": "string",
+          "enum": [
+            "mock",
+            "cli"
+          ],
+          "default": "mock",
+          "description": "Findings provider: 'mock' reads mock findings JSON, 'cli' executes Python scanner CLI."
+        },
+        "securityScanner.cliPath": {
+          "type": "string",
+          "default": "code-security-scanner",
+          "description": "Path or executable name for the context security scanner CLI binary."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node ./out/test/parse.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.3.3"
+  }
+}
