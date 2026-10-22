@@ -4,10 +4,12 @@ from typing import Dict, List, Optional, Union
 from scanner.classifier import classify_environment
 from scanner.context import ProjectContext, load_project_context
 from scanner.models import EnvClassification, Environment, Finding, Severity
+from scanner.severity import adjust_severity_for_rule
 
 FIREBASE_OPEN_ACCESS_PATTERN = re.compile(
     r"allow\s+(?:read\s*,\s*write|write\s*,\s*read)\s*:\s*if\s+true\s*;"
 )
+FIREBASE_OPEN_ACCESS_BASE_SEVERITY = Severity.MEDIUM
 
 
 def run_rules(
@@ -105,12 +107,19 @@ def run_rules(
                     with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
                         for line_num, line_text in enumerate(f, start=1):
                             if FIREBASE_OPEN_ACCESS_PATTERN.search(line_text):
+                                rule_id = "firebase-open-access"
+                                final_severity = adjust_severity_for_rule(
+                                    severity=FIREBASE_OPEN_ACCESS_BASE_SEVERITY,
+                                    rule_id=rule_id,
+                                    environment=classification.environment,
+                                    confidence=classification.confidence,
+                                )
                                 findings.append(
                                     Finding(
                                         file=rel_key,
                                         line=line_num,
-                                        rule_id="firebase-open-access",
-                                        severity=Severity.HIGH,
+                                        rule_id=rule_id,
+                                        severity=final_severity,
                                         message="Insecure Firestore rules: open read and write access granted ('allow read, write: if true;').",
                                         environment=classification.environment,
                                         confidence=classification.confidence,
