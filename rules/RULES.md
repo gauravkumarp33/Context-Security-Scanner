@@ -27,9 +27,9 @@ Severity values never exceed `critical` and never fall below `low`.
 
 | Environment | Condition | Category Set | Severity Adjustment |
 |---|---|---|---|
-| `production` | `confidence >= 0.8` | `public_access`, `debug_mode`, `disabled_tls`, `exposed_secret` | **Raise by ONE level** (capped at `critical`) |
-| `production` | Any | Other / unmapped categories | Keep original severity |
-| `local-testing` | `confidence >= 0.8` and `is_real_secret=False` | `insecure_config`, `test_credentials` | **Lower by at most ONE level** (never below `low`) |
+| `production` | `confidence >= 0.8` | `debug_mode`, `disabled_tls`, `exposed_secret` | **Raise by ONE level** (capped at `critical`) |
+| `production` | Any | Other / unmapped categories (including `public_access`) | Keep original severity |
+| `local-testing` | `confidence >= 0.8` and `is_real_secret=False` | `insecure_config`, `test_credentials`, `public_access` | **Lower by at most ONE level** (never below `low`) |
 | `local-testing` | `is_real_secret=True` | Any | Keep original severity (real secrets are **never** lowered) |
 | `local-testing` | `confidence < 0.8` | Any | Keep original severity (treated as `unknown` for adjustment) |
 | `unknown` | Any | Any | **unknown never lowers severity** (severity remains unchanged) |
@@ -42,8 +42,8 @@ Severity values never exceed `critical` and never fall below `low`.
 
 Detection rules are mapped to specific categories in `scanner/severity.py`:
 
-| Rule ID | Category | Default Base Severity | Production Adjusted | Local-Testing Adjusted |
-|---|---|---|---|---|
-| `firebase-open-access` | `public_access` | `medium` | `high` | `medium` |
+| Rule ID | Category | Default Base Severity | Production Adjusted | Local-Testing Adjusted | Unknown Adjusted |
+|---|---|---|---|---|---|
+| `firebase-open-access` | `public_access` | `high` | `high` | `medium` | `high` |
 
 Unmapped rule IDs receive no category and their severity is never altered by environment policies.

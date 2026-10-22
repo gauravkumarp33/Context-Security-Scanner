@@ -82,7 +82,7 @@ def test_production_raises_exactly_one_level():
     # LOW -> MEDIUM
     assert adjust_severity(
         severity=Severity.LOW,
-        category="public_access",
+        category="disabled_tls",
         environment=Environment.PRODUCTION,
         confidence=0.9,
     ) == Severity.MEDIUM
@@ -108,7 +108,7 @@ def test_critical_stays_critical():
     """Verify that raising in production is capped at critical."""
     assert adjust_severity(
         severity=Severity.CRITICAL,
-        category="public_access",
+        category="exposed_secret",
         environment=Environment.PRODUCTION,
         confidence=0.99,
     ) == Severity.CRITICAL
@@ -149,3 +149,45 @@ def test_unmapped_rule_unchanged():
         environment=Environment.PRODUCTION,
         confidence=0.95,
     ) == Severity.HIGH
+
+
+def test_firebase_open_access_policy():
+    """Verify exact policy for firebase-open-access (public_access).
+
+    - production: stays HIGH
+    - unknown: stays HIGH
+    - local-testing with confidence < 0.8: stays HIGH
+    - local-testing with confidence >= 0.8: lowers to MEDIUM
+    """
+    # Production stays HIGH
+    assert adjust_severity_for_rule(
+        severity=Severity.HIGH,
+        rule_id="firebase-open-access",
+        environment=Environment.PRODUCTION,
+        confidence=0.95,
+    ) == Severity.HIGH
+
+    # Unknown stays HIGH
+    assert adjust_severity_for_rule(
+        severity=Severity.HIGH,
+        rule_id="firebase-open-access",
+        environment=Environment.UNKNOWN,
+        confidence=0.9,
+    ) == Severity.HIGH
+
+    # Confidence below 0.8 in local-testing stays HIGH
+    assert adjust_severity_for_rule(
+        severity=Severity.HIGH,
+        rule_id="firebase-open-access",
+        environment=Environment.LOCAL_TESTING,
+        confidence=0.79,
+    ) == Severity.HIGH
+
+    # Confidence >= 0.8 in local-testing lowers to MEDIUM
+    assert adjust_severity_for_rule(
+        severity=Severity.HIGH,
+        rule_id="firebase-open-access",
+        environment=Environment.LOCAL_TESTING,
+        confidence=0.8,
+    ) == Severity.MEDIUM
+

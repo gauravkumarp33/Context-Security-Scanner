@@ -5,7 +5,6 @@ from scanner.models import Environment, Severity
 CONFIDENCE_THRESHOLD: float = 0.8
 
 PRODUCTION_RAISABLE_CATEGORIES: Set[str] = {
-    "public_access",
     "debug_mode",
     "disabled_tls",
     "exposed_secret",
@@ -14,6 +13,7 @@ PRODUCTION_RAISABLE_CATEGORIES: Set[str] = {
 LOCAL_TESTING_LOWERABLE_CATEGORIES: Set[str] = {
     "insecure_config",
     "test_credentials",
+    "public_access",
 }
 
 RULE_CATEGORY_MAP: Dict[str, str] = {

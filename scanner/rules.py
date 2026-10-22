@@ -9,7 +9,7 @@ from scanner.severity import adjust_severity_for_rule
 FIREBASE_OPEN_ACCESS_PATTERN = re.compile(
     r"allow\s+(?:read\s*,\s*write|write\s*,\s*read)\s*:\s*if\s+true\s*;"
 )
-FIREBASE_OPEN_ACCESS_BASE_SEVERITY = Severity.MEDIUM
+FIREBASE_OPEN_ACCESS_BASE_SEVERITY = Severity.HIGH
 
 
 def run_rules(

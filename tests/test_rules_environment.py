@@ -108,3 +108,44 @@ def test_rules_output_validates_against_schema(vulnerable_fixture_path, repo_roo
         schema = json.load(sf)
 
     jsonschema.validate(instance=findings_dicts, schema=schema)
+
+
+def test_unknown_environment_finding_is_high(tmp_path):
+    """Verify that an unknown-environment firebase-open-access finding preserves base severity HIGH."""
+    rules_file = tmp_path / "standalone.rules"
+    rules_file.write_text("allow read, write: if true;\n", encoding="utf-8")
+
+    findings = run_rules(
+        project_root=tmp_path,
+        files=[rules_file],
+        classifications=None,
+    )
+
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.rule_id == "firebase-open-access"
+    assert f.environment == Environment.UNKNOWN
+    # Must preserve base severity HIGH: unknown never lowers severity
+    assert f.severity == Severity.HIGH
+
+
+def test_local_testing_environment_finding_is_medium(tmp_path):
+    """Verify that a local-testing firebase-open-access finding with confidence >= 0.8 lowers to MEDIUM."""
+    test_dir = tmp_path / "tests"
+    test_dir.mkdir()
+    rules_file = test_dir / "firestore.rules"
+    rules_file.write_text("allow read, write: if true;\n", encoding="utf-8")
+
+    findings = run_rules(
+        project_root=tmp_path,
+        files=[rules_file],
+        classifications=None,
+    )
+
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.rule_id == "firebase-open-access"
+    assert f.environment == Environment.LOCAL_TESTING
+    assert f.confidence >= 0.8
+    # Lowered by one level: HIGH -> MEDIUM
+    assert f.severity == Severity.MEDIUM
