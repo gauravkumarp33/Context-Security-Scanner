@@ -94,24 +94,23 @@ def adjust_severity(
     except (ValueError, TypeError):
         conf_val = 0.0
 
-    effective_env = env_val
-    if conf_val < CONFIDENCE_THRESHOLD:
-        effective_env = Environment.UNKNOWN.value
-
     # Apply environment adjustment policies
-    if effective_env == Environment.PRODUCTION.value:
+    if env_val == Environment.PRODUCTION.value:
         if category in PRODUCTION_RAISABLE_CATEGORIES:
             return _raise_severity(current_sev)
         return current_sev
 
-    if effective_env == Environment.LOCAL_TESTING.value:
+    if env_val == Environment.LOCAL_TESTING.value:
+        # Confidence below 0.8 is treated as unknown for adjustment only (never lowers)
+        if conf_val < CONFIDENCE_THRESHOLD:
+            return current_sev
         if is_real_secret:
             return current_sev
         if category in LOCAL_TESTING_LOWERABLE_CATEGORIES:
             return _lower_severity(current_sev)
         return current_sev
 
-    # unknown: NEVER lowers severity and does not raise
+    # unknown: NEVER lowers severity
     return current_sev
 
 
