@@ -83,6 +83,22 @@ function resolveFindingUri(
   return undefined;
 }
 
+function createDiagnostic(finding: Finding): vscode.Diagnostic {
+  // Format: "[rule_id] message | Environment: X | Fix: recommendation"
+  const messageText = `[${finding.rule_id}] ${finding.message} | Environment: ${finding.environment} | Fix: ${finding.recommendation}`;
+  const lineIdx = Math.max(0, finding.line - 1);
+  const range = new vscode.Range(lineIdx, 0, lineIdx, 1000);
+
+  const diagnostic = new vscode.Diagnostic(
+    range,
+    messageText,
+    mapSeverityToDiagnostic(finding.severity)
+  );
+  diagnostic.source = 'Security Scanner';
+  diagnostic.code = finding.rule_id;
+  return diagnostic;
+}
+
 export function activate(context: vscode.ExtensionContext) {
   // Output Channel for diagnostic and scan logs
   const outputChannel = vscode.window.createOutputChannel('Security Scanner');
@@ -119,6 +135,9 @@ export function activate(context: vscode.ExtensionContext) {
   statusBarItem.command = 'security-scanner.scanWorkspace';
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
+
+  // In-memory cache of current findings
+  let activeFindings: Finding[] = [];
 
   // Helper to get active provider
   const getProvider = (): FindingsProvider => {
@@ -208,20 +227,20 @@ export function activate(context: vscode.ExtensionContext) {
       try {
         const provider = getProvider();
         const scanResult = await provider.scan(activeFolder);
-        const findings = scanResult.findings;
+        activeFindings = scanResult.findings;
 
         outputChannel.appendLine(
-          `[Security Scanner] Scan completed successfully. Found ${findings.length} issue(s).`
+          `[Security Scanner] Scan completed successfully. Found ${activeFindings.length} issue(s).`
         );
 
         // 1. Update Tree View
-        treeDataProvider.setFindings(findings);
+        treeDataProvider.setFindings(activeFindings);
 
         // 2. Clear previous diagnostics and populate new ones
         diagnosticCollection.clear();
         const diagnosticsByFile = new Map<string, { uri: vscode.Uri; diags: vscode.Diagnostic[] }>();
 
-        for (const finding of findings) {
+        for (const finding of activeFindings) {
           const fileUri = resolveFindingUri(finding, activeFolder, context);
           if (!fileUri) {
             continue;
@@ -232,20 +251,7 @@ export function activate(context: vscode.ExtensionContext) {
             diagnosticsByFile.set(fileKey, { uri: fileUri, diags: [] });
           }
 
-          // Exact required format: "[rule_id] message | Environment: X | Fix: recommendation"
-          const messageText = `[${finding.rule_id}] ${finding.message} | Environment: ${finding.environment} | Fix: ${finding.recommendation}`;
-          const lineIdx = Math.max(0, finding.line - 1);
-          const range = new vscode.Range(lineIdx, 0, lineIdx, 1000);
-
-          const diagnostic = new vscode.Diagnostic(
-            range,
-            messageText,
-            mapSeverityToDiagnostic(finding.severity)
-          );
-          diagnostic.source = 'Security Scanner';
-          diagnostic.code = finding.rule_id;
-
-          diagnosticsByFile.get(fileKey)!.diags.push(diagnostic);
+          diagnosticsByFile.get(fileKey)!.diags.push(createDiagnostic(finding));
         }
 
         for (const { uri, diags } of diagnosticsByFile.values()) {
@@ -253,11 +259,11 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         // 3. Update Status Bar: Complete
-        statusBarItem.text = `$(shield) Security Scanner: ${findings.length} finding(s)`;
-        statusBarItem.tooltip = `Scan complete. Found ${findings.length} issue(s). Click to re-run.`;
+        statusBarItem.text = `$(shield) Security Scanner: ${activeFindings.length} finding(s)`;
+        statusBarItem.tooltip = `Scan complete. Found ${activeFindings.length} issue(s). Click to re-run.`;
 
         vscode.window.showInformationMessage(
-          `Security Scanner: Scan completed. Found ${findings.length} finding(s).`
+          `Security Scanner: Scan completed. Found ${activeFindings.length} finding(s).`
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -272,6 +278,92 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
   context.subscriptions.push(scanWorkspaceCommand);
+
+  // Command: Scan Single File (Feature 5)
+  const scanSingleFile = async (documentUri: vscode.Uri) => {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    const activeFolder = workspaceFolders ? workspaceFolders[0] : undefined;
+
+    statusBarItem.text = '$(sync~spin) Security Scanner: Scanning file...';
+    outputChannel.appendLine(
+      `[Security Scanner] Scanning single file: ${documentUri.fsPath}`
+    );
+
+    try {
+      const provider = getProvider();
+      const scanResult = await provider.scanFile(documentUri, activeFolder);
+      const newFileFindings = scanResult.findings;
+
+      // Update diagnostics for this specific file
+      const fileDiagnostics = newFileFindings.map((f) => createDiagnostic(f));
+      diagnosticCollection.set(documentUri, fileDiagnostics);
+
+      // Merge new findings into active findings cache
+      const docPathNorm = documentUri.fsPath.replace(/\\/g, '/').toLowerCase();
+      activeFindings = activeFindings.filter((f) => {
+        const fUri = resolveFindingUri(f, activeFolder, context);
+        if (!fUri) {
+          return true;
+        }
+        return fUri.fsPath.replace(/\\/g, '/').toLowerCase() !== docPathNorm;
+      });
+      activeFindings.push(...newFileFindings);
+
+      // Update tree view
+      treeDataProvider.setFindings(activeFindings);
+
+      // Update status bar
+      statusBarItem.text = `$(shield) Security Scanner: ${activeFindings.length} finding(s)`;
+      statusBarItem.tooltip = `Security Scanner active: ${activeFindings.length} finding(s).`;
+      outputChannel.appendLine(
+        `[Security Scanner] Single-file scan completed for ${path.basename(documentUri.fsPath)}. Found ${newFileFindings.length} issue(s).`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      outputChannel.appendLine(`[ERROR] Single-file scan failed: ${msg}`);
+      statusBarItem.text = `$(shield) Security Scanner: ${activeFindings.length} finding(s)`;
+    }
+  };
+
+  const scanFileCommand = vscode.commands.registerCommand(
+    'security-scanner.scanFile',
+    async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || editor.document.uri.scheme !== 'file') {
+        vscode.window.showWarningMessage(
+          'Security Scanner: Please open a file to scan.'
+        );
+        return;
+      }
+      await scanSingleFile(editor.document.uri);
+    }
+  );
+  context.subscriptions.push(scanFileCommand);
+
+  // Feature 5: Automatic debounced scan on save
+  let saveDebounceTimer: NodeJS.Timeout | undefined;
+  const onSaveSubscription = vscode.workspace.onDidSaveTextDocument(
+    async (document: vscode.TextDocument) => {
+      if (document.uri.scheme !== 'file') {
+        return;
+      }
+
+      const config = vscode.workspace.getConfiguration('securityScanner');
+      const autoScan = config.get<boolean>('autoScanOnSave', true);
+      if (!autoScan) {
+        return;
+      }
+
+      if (saveDebounceTimer) {
+        clearTimeout(saveDebounceTimer);
+      }
+
+      saveDebounceTimer = setTimeout(async () => {
+        await scanSingleFile(document.uri);
+      }, 400);
+    }
+  );
+  context.subscriptions.push(onSaveSubscription);
 }
 
 export function deactivate() {}

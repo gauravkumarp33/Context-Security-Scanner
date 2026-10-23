@@ -23,4 +23,5 @@ export interface ScanResult {
 
 export interface FindingsProvider {
   scan(workspaceFolder: vscode.WorkspaceFolder): Promise<ScanResult>;
+  scanFile(fileUri: vscode.Uri, workspaceFolder?: vscode.WorkspaceFolder): Promise<ScanResult>;
 }

@@ -12,7 +12,8 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onCommand:security-scanner.scanWorkspace"
+    "onCommand:security-scanner.scanWorkspace",
+    "onCommand:security-scanner.scanFile"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -22,6 +23,12 @@
         "title": "Security Scanner: Scan Workspace",
         "category": "Security Scanner",
         "icon": "$(shield)"
+      },
+      {
+        "command": "security-scanner.scanFile",
+        "title": "Security Scanner: Scan Current File",
+        "category": "Security Scanner",
+        "icon": "$(search)"
       },
       {
         "command": "security-scanner.openFinding",
@@ -58,6 +65,12 @@
           "when": "view == securityFindings || view == securityFindingsExplorer",
           "group": "navigation"
         }
+      ],
+      "editor/context": [
+        {
+          "command": "security-scanner.scanFile",
+          "group": "navigation"
+        }
       ]
     },
     "configuration": {
@@ -76,6 +89,11 @@
           "type": "string",
           "default": "code-security-scanner",
           "description": "Path or executable name for the context security scanner CLI binary."
+        },
+        "securityScanner.autoScanOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically trigger a context security scan when a file is saved."
         }
       }
     }
