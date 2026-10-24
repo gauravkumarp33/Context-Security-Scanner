@@ -135,7 +135,76 @@ function runTests() {
     console.log('✓ Wrong shape inputs throw clear descriptive errors');
   }
 
+  // Test Case 5: Trailing stderr-style text after JSON and leading banners
+  {
+    const jsonOutput = JSON.stringify([
+      {
+        file: 'src/config.py',
+        line: 12,
+        rule_id: 'SEC-004',
+        severity: 'high',
+        message: 'Insecure config',
+        environment: 'production',
+        confidence: 0.9,
+        evidence: ['matched in deploy script'],
+        recommendation: 'Fix config',
+      },
+    ]);
+    const noisyOutput = `Starting scanner v1.0...\n${jsonOutput}\n[WARNING] Non-critical warning emitted to stdout/stderr\nDeprecation notice: xyz\n`;
+    const result = parseScanResult(noisyOutput);
+    assert.strictEqual(result.findings.length, 1);
+    assert.strictEqual(result.findings[0].rule_id, 'SEC-004');
+    assert.deepStrictEqual(result.findings[0].evidence, ['matched in deploy script']);
+    console.log('✓ Handled trailing stderr-style noise and leading banners around JSON');
+  }
+
+  // Test Case 6: Missing environment field normalized to 'unknown'
+  {
+    const missingEnvJson = JSON.stringify([
+      {
+        file: 'lib/db.ts',
+        line: 7,
+        rule_id: 'SEC-005',
+        severity: 'medium',
+        message: 'No env specified',
+        // environment omitted
+        confidence: 0.5,
+      },
+    ]);
+    const result = parseScanResult(missingEnvJson);
+    assert.strictEqual(result.findings.length, 1);
+    assert.strictEqual(result.findings[0].environment, 'unknown');
+    assert.strictEqual(result.findings[0].confidence, 0.5);
+    assert.deepStrictEqual(result.findings[0].evidence, []);
+    assert.strictEqual(result.findings[0].recommendation, '');
+    console.log('✓ Missing environment field safely normalized to "unknown"');
+  }
+
+  // Test Case 7: Object wrapped in { findings: [...] }
+  {
+    const wrappedJson = JSON.stringify({
+      status: 'success',
+      findings: [
+        {
+          file: 'main.py',
+          line: 20,
+          rule_id: 'SEC-006',
+          severity: 'critical',
+          message: 'Root access',
+          environment: 'production',
+          confidence: 1.0,
+        },
+      ],
+    });
+    const result = parseScanResult(wrappedJson);
+    assert.strictEqual(result.findings.length, 1);
+    assert.strictEqual(result.findings[0].rule_id, 'SEC-006');
+    assert.strictEqual(result.status, 'success');
+    console.log('✓ Successfully parsed { findings: [...] } wrapped object');
+  }
+
   console.log('\nAll parseScanResult unit tests passed successfully!\n');
 }
 
 runTests();
+

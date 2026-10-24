@@ -26,6 +26,7 @@ export class MockFindingsProvider implements FindingsProvider {
     // 2. Relative to workspace folder
     candidatePaths.push(
       path.join(workspaceFolder.uri.fsPath, 'mock', 'findings.mock.json'),
+      path.join(workspaceFolder.uri.fsPath, '..', 'findings.mock.json'),
       path.join(
         workspaceFolder.uri.fsPath,
         'vscode-extension',
@@ -69,28 +70,102 @@ export class MockFindingsProvider implements FindingsProvider {
   }
 }
 
+export interface CliProviderOptions {
+  pythonPath?: string;
+  scannerRoot?: string;
+  outputChannel?: vscode.OutputChannel;
+  cliExecutable?: string;
+}
+
 /**
  * Production CLI provider executing the Python scanner binary or module.
  * Swappable with MockFindingsProvider. Uses child_process.spawn with executable and
  * arguments passed strictly as separate items, never as a shell string.
  */
 export class CliFindingsProvider implements FindingsProvider {
-  constructor(private readonly cliExecutable: string = 'code-security-scanner') {}
+  private readonly pythonPath: string;
+  private readonly scannerRoot: string;
+  private readonly outputChannel?: vscode.OutputChannel;
+
+  constructor(
+    pythonPathOrOptions?: string | CliProviderOptions,
+    scannerRoot?: string,
+    outputChannel?: vscode.OutputChannel
+  ) {
+    if (typeof pythonPathOrOptions === 'object' && pythonPathOrOptions !== null) {
+      this.pythonPath = pythonPathOrOptions.pythonPath || 'python';
+      this.scannerRoot = pythonPathOrOptions.scannerRoot || '';
+      this.outputChannel = pythonPathOrOptions.outputChannel;
+    } else {
+      this.pythonPath = pythonPathOrOptions || 'python';
+      this.scannerRoot = scannerRoot || '';
+      this.outputChannel = outputChannel;
+    }
+  }
 
   scan(workspaceFolder: vscode.WorkspaceFolder): Promise<ScanResult> {
-    return this.runCliScan(workspaceFolder.uri.fsPath, workspaceFolder.uri.fsPath);
+    const cwd = this.resolveRepoRoot(workspaceFolder);
+    return this.runCliScan(path.resolve(workspaceFolder.uri.fsPath), cwd);
   }
 
   scanFile(fileUri: vscode.Uri, workspaceFolder?: vscode.WorkspaceFolder): Promise<ScanResult> {
-    const cwd = workspaceFolder ? workspaceFolder.uri.fsPath : path.dirname(fileUri.fsPath);
-    return this.runCliScan(fileUri.fsPath, cwd);
+    const cwd = this.resolveRepoRoot(workspaceFolder);
+    return this.runCliScan(path.resolve(fileUri.fsPath), cwd);
+  }
+
+  private resolveRepoRoot(workspaceFolder?: vscode.WorkspaceFolder): string {
+    if (this.scannerRoot && this.scannerRoot.trim().length > 0) {
+      return path.resolve(this.scannerRoot);
+    }
+    // Check parent of vscode-extension directory (__dirname is <repo>/vscode-extension/out)
+    const extRepoRoot = path.resolve(__dirname, '..', '..');
+    if (fs.existsSync(path.join(extRepoRoot, 'scanner'))) {
+      return extRepoRoot;
+    }
+    if (workspaceFolder) {
+      let curr = workspaceFolder.uri.fsPath;
+      for (let i = 0; i < 4; i++) {
+        if (fs.existsSync(path.join(curr, 'scanner'))) {
+          return curr;
+        }
+        const parent = path.dirname(curr);
+        if (parent === curr) break;
+        curr = parent;
+      }
+    }
+    return extRepoRoot;
   }
 
   private runCliScan(targetPath: string, cwd: string): Promise<ScanResult> {
     return new Promise<ScanResult>((resolve, reject) => {
-      const configuredExe = this.cliExecutable || 'code-security-scanner';
+      const configuredExe = (this.pythonPath || 'python').trim();
+      const absoluteTarget = path.resolve(targetPath);
 
-      const spawnProcess = (exe: string, args: string[], onFallback?: (err: Error) => void) => {
+      if (this.outputChannel) {
+        this.outputChannel.show(true);
+      }
+
+      const spawnProcess = (exeCommand: string, extraPrefixArgs: string[], onFallback?: (err: Error) => void) => {
+        let exe = exeCommand;
+        let prefixArgs = [...extraPrefixArgs];
+
+        if (exeCommand === 'py -3') {
+          exe = 'py';
+          prefixArgs = ['-3', ...prefixArgs];
+        }
+
+        const args = [...prefixArgs, '-m', 'scanner', 'scan', absoluteTarget, '--format', 'json'];
+        const fullCmd = `${exe} ${args.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`;
+
+        if (this.outputChannel) {
+          this.outputChannel.appendLine(`\n============================================================`);
+          this.outputChannel.appendLine(`[Security Scanner] Spawning CLI Process`);
+          this.outputChannel.appendLine(`  Command : ${fullCmd}`);
+          this.outputChannel.appendLine(`  CWD     : ${cwd}`);
+          this.outputChannel.appendLine(`  Target  : ${absoluteTarget}`);
+          this.outputChannel.appendLine(`============================================================`);
+        }
+
         const child = child_process.spawn(exe, args, {
           cwd,
           shell: false,
@@ -111,55 +186,55 @@ export class CliFindingsProvider implements FindingsProvider {
           if (onFallback) {
             onFallback(err);
           } else {
-            reject(
-              new Error(
-                `Failed to start scanner CLI "${exe}": ${err.message}`
-              )
-            );
+            const errMsg = `Failed to start scanner CLI "${exe}": ${err.message}`;
+            if (this.outputChannel) {
+              this.outputChannel.appendLine(`[ERROR] ${errMsg}`);
+            }
+            reject(new Error(errMsg));
           }
         });
 
         child.on('close', (code: number | null) => {
-          // Exit Code Contract:
-          // 0 = Clean / Success
-          // 1 = Blocking findings detected (scan still succeeded)
-          // 2 = Scanner Error
-          if (code === 0 || code === 1) {
-            try {
-              const scanResult = parseScanResult(stdout);
-              resolve(scanResult);
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              reject(
-                new Error(
-                  `Failed to parse scanner output (exit code ${code}): ${msg}\nOutput: ${stdout}`
-                )
-              );
+          if (this.outputChannel) {
+            this.outputChannel.appendLine(`[Security Scanner] Exit Code: ${code}`);
+            this.outputChannel.appendLine(`[Security Scanner] STDOUT:\n${stdout.length > 0 ? stdout : '<empty>'}`);
+            this.outputChannel.appendLine(`[Security Scanner] STDERR:\n${stderr.length > 0 ? stderr : '<empty>'}`);
+            this.outputChannel.appendLine(`============================================================\n`);
+          }
+
+          // Parse stdout only; don't treat a non-zero exit as failure when stdout has valid JSON.
+          try {
+            const scanResult = parseScanResult(stdout);
+            if (this.outputChannel) {
+              this.outputChannel.appendLine(`[Security Scanner] Successfully parsed ${scanResult.findings.length} finding(s).`);
             }
-          } else {
-            reject(
-              new Error(
-                `Scanner CLI failed with exit code ${code}.\n${stderr || stdout}`
-              )
-            );
+            resolve(scanResult);
+          } catch (parseErr) {
+            const previewStdout = stdout.trim().slice(0, 200);
+            const errMsg = `Scanner failed with exit code ${code}.\nstderr: ${stderr.trim() || '<empty>'}\nstdout (first 200 chars): ${previewStdout || '<empty>'}`;
+            if (this.outputChannel) {
+              this.outputChannel.appendLine(`[ERROR] ${errMsg}`);
+            }
+            reject(new Error(errMsg));
           }
         });
       };
 
-      // Try configured executable; if it fails with ENOENT and is the default, try python -m scanner fallback
-      const primaryArgs = ['scan', targetPath, '--format', 'json'];
-      spawnProcess(configuredExe, primaryArgs, (primaryErr) => {
-        if (configuredExe === 'code-security-scanner') {
-          // Fallback to python -m scanner
-          const fallbackExe = process.platform === 'win32' ? 'python' : 'python3';
-          const fallbackArgs = ['-m', 'scanner', 'scan', targetPath, '--format', 'json'];
-          spawnProcess(fallbackExe, fallbackArgs);
+      // Try configured pythonPath; if it fails with ENOENT on Windows, fallback to 'py -3'
+      spawnProcess(configuredExe, [], (primaryErr) => {
+        if (process.platform === 'win32' && (configuredExe === 'python' || configuredExe === 'python3')) {
+          if (this.outputChannel) {
+            this.outputChannel.appendLine(
+              `[Security Scanner] Primary executable "${configuredExe}" failed (${primaryErr.message}). Trying fallback "py -3"...`
+            );
+          }
+          spawnProcess('py -3', []);
         } else {
-          reject(
-            new Error(
-              `Failed to start scanner CLI "${configuredExe}": ${primaryErr.message}`
-            )
-          );
+          const errMsg = `Failed to start scanner CLI "${configuredExe}": ${primaryErr.message}`;
+          if (this.outputChannel) {
+            this.outputChannel.appendLine(`[ERROR] ${errMsg}`);
+          }
+          reject(new Error(errMsg));
         }
       });
     });

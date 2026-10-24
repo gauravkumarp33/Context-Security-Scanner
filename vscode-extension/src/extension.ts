@@ -1,9 +1,11 @@
+import * as child_process from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { parseScanResult } from './parse';
 import { CliFindingsProvider, MockFindingsProvider } from './provider';
 import { SecurityFindingsTreeProvider } from './tree';
-import { Finding, FindingsProvider, Severity } from './types';
+import { Finding, FindingsProvider, ScanResult, Severity } from './types';
 
 function mapSeverityToDiagnostic(severity: Severity): vscode.DiagnosticSeverity {
   switch (severity) {
@@ -23,7 +25,7 @@ function mapSeverityToDiagnostic(severity: Severity): vscode.DiagnosticSeverity 
  */
 function resolveFindingUri(
   finding: Finding,
-  workspaceFolder?: vscode.WorkspaceFolder,
+  scanRoot?: string | vscode.WorkspaceFolder,
   extensionContext?: vscode.ExtensionContext
 ): vscode.Uri | undefined {
   if (path.isAbsolute(finding.file)) {
@@ -32,16 +34,23 @@ function resolveFindingUri(
     }
   }
 
-  // 1. Check workspace folder
-  if (workspaceFolder) {
-    const candidate = path.join(workspaceFolder.uri.fsPath, finding.file);
+  const rootPath =
+    typeof scanRoot === 'string'
+      ? scanRoot
+      : scanRoot
+      ? scanRoot.uri.fsPath
+      : undefined;
+
+  // 1. Resolve relative to scan root
+  if (rootPath) {
+    const candidate = path.resolve(rootPath, finding.file);
     if (fs.existsSync(candidate)) {
       return vscode.Uri.file(candidate);
     }
 
-    // 1b. Check if workspace contains mock/sample-workspace/
+    // 1b. Check if scan root contains mock/sample-workspace/
     const sampleInWorkspace = path.join(
-      workspaceFolder.uri.fsPath,
+      rootPath,
       'mock',
       'sample-workspace',
       finding.file
@@ -51,7 +60,7 @@ function resolveFindingUri(
     }
 
     const sampleInExtSubdir = path.join(
-      workspaceFolder.uri.fsPath,
+      rootPath,
       'vscode-extension',
       'mock',
       'sample-workspace',
@@ -62,7 +71,17 @@ function resolveFindingUri(
     }
   }
 
-  // 2. Check extension directory sample workspace
+  // 2. Check workspace folders
+  if (vscode.workspace.workspaceFolders) {
+    for (const folder of vscode.workspace.workspaceFolders) {
+      const candidate = path.resolve(folder.uri.fsPath, finding.file);
+      if (fs.existsSync(candidate)) {
+        return vscode.Uri.file(candidate);
+      }
+    }
+  }
+
+  // 3. Check extension directory sample workspace
   if (extensionContext) {
     const extSample = path.join(
       extensionContext.extensionPath,
@@ -75,18 +94,24 @@ function resolveFindingUri(
     }
   }
 
-  // 3. Fallback to workspace uri even if file doesn't currently exist
-  if (workspaceFolder) {
-    return vscode.Uri.joinPath(workspaceFolder.uri, finding.file);
+  // 4. Fallback: if rootPath is available, return candidate even if not existing yet on disk
+  if (rootPath) {
+    return vscode.Uri.file(path.resolve(rootPath, finding.file));
+  }
+  if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+    return vscode.Uri.file(path.resolve(vscode.workspace.workspaceFolders[0].uri.fsPath, finding.file));
   }
 
   return undefined;
 }
 
 function createDiagnostic(finding: Finding): vscode.Diagnostic {
-  // Format: "[rule_id] message | Environment: X | Fix: recommendation"
-  const messageText = `[${finding.rule_id}] ${finding.message} | Environment: ${finding.environment} | Fix: ${finding.recommendation}`;
-  const lineIdx = Math.max(0, finding.line - 1);
+  const confidencePct = Math.round((finding.confidence ?? 0) * 100);
+  let messageText = `[${finding.rule_id}] ${finding.message} | Environment: ${finding.environment || 'unknown'} (${confidencePct}%) | Fix: ${finding.recommendation || 'None'}`;
+  if (finding.evidence && finding.evidence.length > 0) {
+    messageText += ` | Evidence: ${finding.evidence.join('; ')}`;
+  }
+  const lineIdx = Math.max(0, (finding.line || 1) - 1);
   const range = new vscode.Range(lineIdx, 0, lineIdx, 1000);
 
   const diagnostic = new vscode.Diagnostic(
@@ -97,6 +122,166 @@ function createDiagnostic(finding: Finding): vscode.Diagnostic {
   diagnostic.source = 'Security Scanner';
   diagnostic.code = finding.rule_id;
   return diagnostic;
+}
+
+/**
+ * Resolves the repository root containing the 'scanner' Python module.
+ * Guaranteed to point to the repository root, NOT the extension folder or workspace subfolder.
+ */
+export function getRepoRoot(customScannerRoot?: string, workspaceFolder?: vscode.WorkspaceFolder): string {
+  // 1. Explicit user setting
+  if (customScannerRoot && customScannerRoot.trim().length > 0) {
+    const custom = path.resolve(customScannerRoot.trim());
+    if (fs.existsSync(custom)) {
+      return custom;
+    }
+  }
+
+  // 2. Parent directory of extension (extension is in <repo>/vscode-extension)
+  // When compiled into out/, __dirname is <repo>/vscode-extension/out
+  const fromDirname = path.resolve(__dirname, '..', '..');
+  if (fs.existsSync(path.join(fromDirname, 'scanner'))) {
+    return fromDirname;
+  }
+  const fromParent = path.resolve(__dirname, '..');
+  if (fs.existsSync(path.join(fromParent, 'scanner'))) {
+    return fromParent;
+  }
+
+  // 3. Walk up from workspaceFolder
+  if (workspaceFolder) {
+    let curr = path.resolve(workspaceFolder.uri.fsPath);
+    for (let i = 0; i < 6; i++) {
+      if (fs.existsSync(path.join(curr, 'scanner'))) {
+        return curr;
+      }
+      const parent = path.dirname(curr);
+      if (parent === curr) break;
+      curr = parent;
+    }
+  }
+
+  // 4. Walk up from any open workspace folders
+  if (vscode.workspace.workspaceFolders) {
+    for (const folder of vscode.workspace.workspaceFolders) {
+      let curr = path.resolve(folder.uri.fsPath);
+      for (let i = 0; i < 6; i++) {
+        if (fs.existsSync(path.join(curr, 'scanner'))) {
+          return curr;
+        }
+        const parent = path.dirname(curr);
+        if (parent === curr) break;
+        curr = parent;
+      }
+    }
+  }
+
+  return fromDirname;
+}
+
+/**
+ * Spawns the Python security scanner CLI with:
+ * 1. cwd set to repository root containing 'scanner'
+ * 2. full command, stdout, stderr, and exit code logged to OutputChannel before parsing
+ * 3. target scan path set to absolute path of workspace folder
+ */
+export function spawnCliScan(
+  targetScanPath: string,
+  workspaceFolder: vscode.WorkspaceFolder | undefined,
+  outputChannel: vscode.OutputChannel
+): Promise<ScanResult> {
+  return new Promise<ScanResult>((resolve, reject) => {
+    const config = vscode.workspace.getConfiguration('securityScanner');
+    const pythonPath = config.get<string>('pythonPath', 'python').trim();
+    const scannerRoot = config.get<string>('scannerRoot', '');
+
+    // 1. Ensure cwd points to the root of the main repository, NOT extension folder or workspace subfolder
+    const cwd = getRepoRoot(scannerRoot, workspaceFolder);
+
+    // 3. Absolute path of target workspace folder
+    const absoluteTarget = path.resolve(targetScanPath);
+
+    // Bring Output channel into focus so it is never blank or hidden
+    outputChannel.show(true);
+
+    const spawnWithExe = (exeCommand: string, extraArgs: string[], onFallback?: (err: Error) => void) => {
+      let exe = exeCommand;
+      let prefixArgs = [...extraArgs];
+      if (exeCommand === 'py -3') {
+        exe = 'py';
+        prefixArgs = ['-3', ...prefixArgs];
+      }
+
+      const args = [...prefixArgs, '-m', 'scanner', 'scan', absoluteTarget, '--format', 'json'];
+      const fullCommand = `${exe} ${args.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`;
+
+      outputChannel.appendLine(`\n============================================================`);
+      outputChannel.appendLine(`[Security Scanner] Spawning CLI Process`);
+      outputChannel.appendLine(`  Command : ${fullCommand}`);
+      outputChannel.appendLine(`  CWD     : ${cwd}`);
+      outputChannel.appendLine(`  Target  : ${absoluteTarget}`);
+      outputChannel.appendLine(`============================================================`);
+
+      const child = child_process.spawn(exe, args, {
+        cwd,
+        shell: false,
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      child.stdout.on('data', (chunk: Buffer | string) => {
+        stdout += chunk.toString();
+      });
+
+      child.stderr.on('data', (chunk: Buffer | string) => {
+        stderr += chunk.toString();
+      });
+
+      child.on('error', (err: any) => {
+        if (onFallback) {
+          onFallback(err);
+        } else {
+          outputChannel.appendLine(`[Security Scanner] Spawn Error: ${err.message}`);
+          reject(new Error(`Failed to start scanner CLI "${exe}": ${err.message}`));
+        }
+      });
+
+      child.on('close', (code: number | null) => {
+        // 2. Explicitly write command, cwd, exit code, stdout, and stderr BEFORE parsing
+        outputChannel.appendLine(`[Security Scanner] Exit Code: ${code}`);
+        outputChannel.appendLine(`[Security Scanner] STDOUT:\n${stdout.length > 0 ? stdout : '<empty>'}`);
+        outputChannel.appendLine(`[Security Scanner] STDERR:\n${stderr.length > 0 ? stderr : '<empty>'}`);
+        outputChannel.appendLine(`============================================================\n`);
+
+        // Parse stdout only; non-zero exit code is not failure if stdout has valid JSON
+        try {
+          const scanResult = parseScanResult(stdout);
+          outputChannel.appendLine(
+            `[Security Scanner] Successfully parsed ${scanResult.findings.length} finding(s).`
+          );
+          resolve(scanResult);
+        } catch (parseErr) {
+          const previewStdout = stdout.trim().slice(0, 200);
+          const errMsg = `Scanner CLI failed (exit code ${code}).\nstderr: ${stderr.trim() || '<empty>'}\nstdout (first 200 chars): ${previewStdout || '<empty>'}`;
+          outputChannel.appendLine(`[ERROR] ${errMsg}`);
+          reject(new Error(errMsg));
+        }
+      });
+    };
+
+    spawnWithExe(pythonPath, [], (primaryErr) => {
+      if (process.platform === 'win32' && (pythonPath === 'python' || pythonPath === 'python3')) {
+        outputChannel.appendLine(
+          `[Security Scanner] Primary executable "${pythonPath}" failed (${primaryErr.message}). Falling back to "py -3"...`
+        );
+        spawnWithExe('py -3', []);
+      } else {
+        outputChannel.appendLine(`[ERROR] Failed to start scanner CLI "${pythonPath}": ${primaryErr.message}`);
+        reject(new Error(`Failed to start scanner CLI "${pythonPath}": ${primaryErr.message}`));
+      }
+    });
+  });
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -142,12 +327,19 @@ export function activate(context: vscode.ExtensionContext) {
   // Helper to get active provider
   const getProvider = (): FindingsProvider => {
     const config = vscode.workspace.getConfiguration('securityScanner');
-    const providerType = config.get<string>('provider', 'mock');
-    const cliPath = config.get<string>('cliPath', 'code-security-scanner');
+    const providerType = config.get<string>('provider', 'cli');
+    const pythonPath = config.get<string>('pythonPath', 'python');
+    const scannerRoot = config.get<string>('scannerRoot', '');
 
     if (providerType === 'cli') {
-      outputChannel.appendLine(`[Security Scanner] Using CLI provider (${cliPath})`);
-      return new CliFindingsProvider(cliPath);
+      outputChannel.appendLine(
+        `[Security Scanner] Using CLI provider (pythonPath: "${pythonPath}", scannerRoot: "${scannerRoot || '<auto>'}")`
+      );
+      return {
+        scan: (wf: vscode.WorkspaceFolder) => spawnCliScan(wf.uri.fsPath, wf, outputChannel),
+        scanFile: (fileUri: vscode.Uri, wf?: vscode.WorkspaceFolder) =>
+          spawnCliScan(fileUri.fsPath, wf, outputChannel),
+      };
     }
 
     outputChannel.appendLine('[Security Scanner] Using Mock findings provider.');
@@ -157,13 +349,18 @@ export function activate(context: vscode.ExtensionContext) {
   // Command: Open Finding in Editor
   const openFindingCommand = vscode.commands.registerCommand(
     'security-scanner.openFinding',
-    async (finding: Finding) => {
+    async (finding: Finding, explicitScanRoot?: string) => {
       try {
         const workspaceFolders = vscode.workspace.workspaceFolders;
-        const workspaceFolder = workspaceFolders ? workspaceFolders[0] : undefined;
+        const scanRoot =
+          explicitScanRoot ||
+          (workspaceFolders && workspaceFolders.length > 0
+            ? workspaceFolders[0].uri.fsPath
+            : undefined);
+
         const targetUri = resolveFindingUri(
           finding,
-          workspaceFolder,
+          scanRoot,
           context
         );
 
@@ -179,8 +376,8 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         const doc = await vscode.workspace.openTextDocument(targetUri);
-        // Note: finding.line is 1-based, VS Code Position is 0-based
-        const lineIdx = Math.max(0, finding.line - 1);
+        // Note: convert line to 0-based (finding.line is 1-based, VS Code Position is 0-based)
+        const lineIdx = Math.max(0, (finding.line || 1) - 1);
         const pos = new vscode.Position(lineIdx, 0);
 
         const editor = await vscode.window.showTextDocument(doc, {
@@ -216,12 +413,16 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       const activeFolder = workspaceFolders[0];
+      const scanRoot = path.resolve(activeFolder.uri.fsPath);
+
+      // Make sure Output Channel is visible immediately
+      outputChannel.show(true);
 
       // Update status bar: Scanning
       statusBarItem.text = '$(sync~spin) Security Scanner: Scanning...';
       statusBarItem.tooltip = 'Scanning workspace for context security issues...';
       outputChannel.appendLine(
-        `\n[Security Scanner] Starting scan on workspace: ${activeFolder.uri.fsPath}`
+        `\n[Security Scanner] Starting scan on workspace: ${scanRoot}`
       );
 
       try {
@@ -233,15 +434,15 @@ export function activate(context: vscode.ExtensionContext) {
           `[Security Scanner] Scan completed successfully. Found ${activeFindings.length} issue(s).`
         );
 
-        // 1. Update Tree View
-        treeDataProvider.setFindings(activeFindings);
+        // 1. Update Tree View with findings and scan root
+        treeDataProvider.setFindings(activeFindings, scanRoot);
 
         // 2. Clear previous diagnostics and populate new ones
         diagnosticCollection.clear();
         const diagnosticsByFile = new Map<string, { uri: vscode.Uri; diags: vscode.Diagnostic[] }>();
 
         for (const finding of activeFindings) {
-          const fileUri = resolveFindingUri(finding, activeFolder, context);
+          const fileUri = resolveFindingUri(finding, scanRoot, context);
           if (!fileUri) {
             continue;
           }
@@ -283,10 +484,12 @@ export function activate(context: vscode.ExtensionContext) {
   const scanSingleFile = async (documentUri: vscode.Uri) => {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     const activeFolder = workspaceFolders ? workspaceFolders[0] : undefined;
+    const scanRoot = activeFolder ? path.resolve(activeFolder.uri.fsPath) : path.resolve(path.dirname(documentUri.fsPath));
 
+    outputChannel.show(true);
     statusBarItem.text = '$(sync~spin) Security Scanner: Scanning file...';
     outputChannel.appendLine(
-      `[Security Scanner] Scanning single file: ${documentUri.fsPath}`
+      `[Security Scanner] Scanning single file: ${path.resolve(documentUri.fsPath)}`
     );
 
     try {
@@ -301,7 +504,7 @@ export function activate(context: vscode.ExtensionContext) {
       // Merge new findings into active findings cache
       const docPathNorm = documentUri.fsPath.replace(/\\/g, '/').toLowerCase();
       activeFindings = activeFindings.filter((f) => {
-        const fUri = resolveFindingUri(f, activeFolder, context);
+        const fUri = resolveFindingUri(f, scanRoot, context);
         if (!fUri) {
           return true;
         }
@@ -309,8 +512,8 @@ export function activate(context: vscode.ExtensionContext) {
       });
       activeFindings.push(...newFileFindings);
 
-      // Update tree view
-      treeDataProvider.setFindings(activeFindings);
+      // Update tree view with scan root
+      treeDataProvider.setFindings(activeFindings, scanRoot);
 
       // Update status bar
       statusBarItem.text = `$(shield) Security Scanner: ${activeFindings.length} finding(s)`;

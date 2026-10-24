@@ -14,6 +14,80 @@ const VALID_ENVIRONMENTS: ReadonlySet<string> = new Set<Environment>([
 ]);
 
 /**
+ * Extracts the outermost JSON substring from raw output by finding the first '[' or '{'
+ * and the matching last ']' or '}'.
+ */
+export function extractJsonString(raw: string): string {
+  const firstArray = raw.indexOf('[');
+  const firstObj = raw.indexOf('{');
+
+  if (firstArray === -1 && firstObj === -1) {
+    throw new Error('Malformed JSON in scan result: no JSON array or object found in scan output');
+  }
+
+  let startChar: string;
+  let endChar: string;
+  let startIdx: number;
+
+  if (firstArray !== -1 && (firstObj === -1 || firstArray < firstObj)) {
+    startChar = '[';
+    endChar = ']';
+    startIdx = firstArray;
+  } else {
+    startChar = '{';
+    endChar = '}';
+    startIdx = firstObj;
+  }
+
+  // Find the matching closing bracket taking into account quoted strings and escapes
+  let depth = 0;
+  let inString = false;
+  let isEscaped = false;
+  let matchingEnd = -1;
+
+  for (let i = startIdx; i < raw.length; i++) {
+    const char = raw[i];
+
+    if (inString) {
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (char === '\\') {
+        isEscaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+    } else if (char === startChar) {
+      depth++;
+    } else if (char === endChar) {
+      depth--;
+      if (depth === 0) {
+        matchingEnd = i;
+        break;
+      }
+    }
+  }
+
+  if (matchingEnd === -1) {
+    // Fallback: try raw.lastIndexOf(endChar)
+    matchingEnd = raw.lastIndexOf(endChar);
+    if (matchingEnd === -1 || matchingEnd < startIdx) {
+      throw new Error(
+        `Malformed JSON in scan result: unclosed JSON ${
+          startChar === '[' ? 'array' : 'object'
+        } in scan output`
+      );
+    }
+  }
+
+  return raw.slice(startIdx, matchingEnd + 1);
+}
+
+/**
  * Parses and defensively validates raw scanner output.
  * Throws a clear Error if the JSON is malformed or the top-level / item shape is invalid.
  * Tolerates missing optional or context fields by supplying safe default values without throwing.
@@ -26,8 +100,9 @@ export function parseScanResult(raw: string | unknown): ScanResult {
     if (!trimmed) {
       throw new Error('Malformed JSON: raw scan output is empty');
     }
+    const jsonStr = extractJsonString(trimmed);
     try {
-      parsed = JSON.parse(trimmed);
+      parsed = JSON.parse(jsonStr);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       throw new Error(`Malformed JSON in scan result: ${msg}`);
@@ -131,6 +206,11 @@ export function parseScanResult(raw: string | unknown): ScanResult {
       confidence = Math.max(0.0, Math.min(1.0, rawFinding.confidence));
     }
 
+    let evidence: string[] = [];
+    if (Array.isArray(rawFinding.evidence)) {
+      evidence = rawFinding.evidence.filter((e): e is string => typeof e === 'string');
+    }
+
     let recommendation = '';
     if (typeof rawFinding.recommendation === 'string') {
       recommendation = rawFinding.recommendation;
@@ -144,6 +224,7 @@ export function parseScanResult(raw: string | unknown): ScanResult {
       message: rawFinding.message,
       environment,
       confidence,
+      evidence,
       recommendation,
     };
   });

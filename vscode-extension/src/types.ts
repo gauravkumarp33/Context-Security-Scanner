@@ -12,6 +12,7 @@ export interface Finding {
   message: string;
   environment: Environment;
   confidence: number;
+  evidence?: string[];
   recommendation: string;
 }
 

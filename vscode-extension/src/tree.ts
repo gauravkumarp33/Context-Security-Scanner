@@ -4,22 +4,31 @@ import { Finding, Severity } from './types';
 const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low'];
 
 export class FindingTreeItem extends vscode.TreeItem {
-  constructor(public readonly finding: Finding) {
+  constructor(public readonly finding: Finding, public readonly scanRoot?: string) {
     super(finding.rule_id, vscode.TreeItemCollapsibleState.None);
 
-    const confidencePct = Math.round(finding.confidence * 100);
-    this.description = `${finding.file}:${finding.line} [${finding.environment} (${confidencePct}%)]`;
+    const confidencePct = Math.round((finding.confidence ?? 0) * 100);
+    const env = finding.environment || 'unknown';
+    this.description = `${finding.file}:${finding.line} [${env} (${confidencePct}%)]`;
 
     const md = new vscode.MarkdownString();
     md.isTrusted = true;
     md.appendMarkdown(`**[${finding.rule_id}] ${finding.severity.toUpperCase()}**\n\n`);
     md.appendMarkdown(`${finding.message}\n\n`);
     md.appendMarkdown(`---\n\n`);
-    md.appendMarkdown(`- **Recommendation:** ${finding.recommendation || 'None'}\n`);
-    md.appendMarkdown(`- **Environment:** ${finding.environment}\n`);
+    md.appendMarkdown(`- **Environment:** \`${env}\`\n`);
     md.appendMarkdown(`- **Confidence:** ${confidencePct}%\n`);
-    md.appendMarkdown(`- **Source:** Security Scanner\n`);
+    md.appendMarkdown(`- **Recommendation:** ${finding.recommendation || 'None'}\n`);
     md.appendMarkdown(`- **Location:** \`${finding.file}:${finding.line}\`\n`);
+    if (finding.evidence && finding.evidence.length > 0) {
+      md.appendMarkdown(`- **Evidence:**\n`);
+      for (const ev of finding.evidence) {
+        md.appendMarkdown(`  - ${ev}\n`);
+      }
+    } else {
+      md.appendMarkdown(`- **Evidence:** None\n`);
+    }
+    md.appendMarkdown(`- **Source:** Security Scanner\n`);
     this.tooltip = md;
 
     switch (finding.severity) {
@@ -53,7 +62,7 @@ export class FindingTreeItem extends vscode.TreeItem {
     this.command = {
       command: 'security-scanner.openFinding',
       title: 'Open Finding',
-      arguments: [finding],
+      arguments: [finding, scanRoot],
     };
   }
 }
@@ -110,14 +119,17 @@ export class SecurityFindingsTreeProvider
   > = this._onDidChangeTreeData.event;
 
   private findings: Finding[] = [];
+  private scanRoot?: string;
 
-  setFindings(findings: Finding[]): void {
+  setFindings(findings: Finding[], scanRoot?: string): void {
     this.findings = findings;
+    this.scanRoot = scanRoot;
     this._onDidChangeTreeData.fire();
   }
 
   clear(): void {
     this.findings = [];
+    this.scanRoot = undefined;
     this._onDidChangeTreeData.fire();
   }
 
@@ -139,7 +151,7 @@ export class SecurityFindingsTreeProvider
     }
 
     if (element instanceof SeverityGroupTreeItem) {
-      const items = element.findings.map((f) => new FindingTreeItem(f));
+      const items = element.findings.map((f) => new FindingTreeItem(f, this.scanRoot));
       return Promise.resolve(items);
     }
 

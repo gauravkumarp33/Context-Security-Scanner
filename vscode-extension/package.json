@@ -79,11 +79,21 @@
         "securityScanner.provider": {
           "type": "string",
           "enum": [
-            "mock",
-            "cli"
+            "cli",
+            "mock"
           ],
-          "default": "mock",
-          "description": "Findings provider: 'mock' reads mock findings JSON, 'cli' executes Python scanner CLI."
+          "default": "cli",
+          "description": "Findings provider: 'cli' executes Python scanner CLI, 'mock' reads mock findings JSON."
+        },
+        "securityScanner.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "Path to Python executable (defaults to 'python')."
+        },
+        "securityScanner.scannerRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Root directory containing the 'scanner' package (defaults to the repository root)."
         },
         "securityScanner.cliPath": {
           "type": "string",
