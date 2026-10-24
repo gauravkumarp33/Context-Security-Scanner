@@ -8,8 +8,10 @@ from scanner.models import Environment, Finding, Severity
 from scanner.rules import (
     GitleaksDetector,
     RegexDetector,
+    RuleDefinition,
     RuleValidationError,
     SemgrepDetector,
+    _safe_int_line,
     load_all_rules,
     load_rules_from_yaml,
     run_rules,
@@ -524,3 +526,216 @@ service cloud.firestore {
 
     findings = run_rules(project_root=tmp_path, files=[clean_py, clean_rules])
     assert len(findings) == 0
+
+
+# --- 7. Semgrep Unmapped Rule Message Redaction & Malformed Line Numbers ---
+
+def test_semgrep_unmapped_rule_does_not_leak_secret(tmp_path):
+    """Assert Semgrep results with unmapped check_id never leak secrets in extra.message."""
+    target_file = tmp_path / "app.py"
+    target_file.write_text("API_SECRET = 'supersecret'\n", encoding="utf-8")
+
+    fake_secret = "AKIA_FAKE_SECRET_TEST_12345"
+    mock_semgrep_results = [
+        {
+            "check_id": "unmapped-custom-semgrep-rule",
+            "start": {"line": 1},
+            "extra": {
+                "message": f"Hardcoded secret leaked in extra.message: {fake_secret}",
+                "lines": f"API_SECRET = '{fake_secret}'",
+            },
+        }
+    ]
+
+    dummy_semgrep_rule = RuleDefinition(
+        id="semgrep-generic-rule",
+        title="Generic Semgrep Rule",
+        severity=Severity.HIGH,
+        message="Known semgrep rule message.",
+        recommendation="Fix issue.",
+        engine="semgrep",
+        pattern="",
+        file_globs=["*"],
+    )
+
+    detector = SemgrepDetector([dummy_semgrep_rule])
+    with patch("scanner.rules.is_semgrep_available", return_value=True), \
+         patch("scanner.rules.run_semgrep", return_value=mock_semgrep_results):
+        findings = detector.detect(target_file, target_file.read_text(encoding="utf-8"))
+
+    assert len(findings) == 1
+    raw_finding = findings[0]
+    assert raw_finding.message == "Semgrep security issue."
+    assert fake_secret not in raw_finding.message
+    assert fake_secret not in raw_finding.recommendation
+
+    finding = Finding(
+        file="app.py",
+        line=raw_finding.line,
+        rule_id=raw_finding.rule_id,
+        severity=raw_finding.severity,
+        message=raw_finding.message,
+        environment=Environment.PRODUCTION,
+        confidence=0.9,
+        recommendation=raw_finding.recommendation,
+    )
+    finding_dict = finding.to_dict()
+    finding_json = json.dumps(finding_dict)
+
+    for field_val in finding_dict.values():
+        assert fake_secret not in str(field_val)
+    assert fake_secret not in finding_json
+
+
+def test_detectors_malformed_line_numbers_safe(tmp_path):
+    """Assert detectors handle malformed line numbers (e.g. string 'abc') without crashing."""
+    target_file = tmp_path / "test_file.py"
+    target_file.write_text("print('hello')\n", encoding="utf-8")
+
+    # 1. Gitleaks with StartLine="abc"
+    gl_rule = RuleDefinition(
+        id="gl-test-rule",
+        title="Gitleaks Rule",
+        severity=Severity.HIGH,
+        message="Secret found.",
+        recommendation="Rotate secret.",
+        engine="gitleaks",
+        pattern="",
+        file_globs=["*"],
+    )
+    gl_detector = GitleaksDetector([gl_rule])
+    mock_gl_results = [{"RuleID": "gl-test-rule", "StartLine": "abc"}]
+
+    with patch("scanner.rules.is_gitleaks_available", return_value=True), \
+         patch("scanner.rules.run_gitleaks", return_value=mock_gl_results):
+        gl_findings = gl_detector.detect(target_file, target_file.read_text(encoding="utf-8"))
+
+    assert len(gl_findings) == 1
+    assert gl_findings[0].line >= 1
+
+    # 2. Semgrep with line="abc"
+    sg_rule = RuleDefinition(
+        id="sg-test-rule",
+        title="Semgrep Rule",
+        severity=Severity.MEDIUM,
+        message="Code issue.",
+        recommendation="Fix code.",
+        engine="semgrep",
+        pattern="",
+        file_globs=["*"],
+    )
+    sg_detector = SemgrepDetector([sg_rule])
+    mock_sg_results = [{"check_id": "sg-test-rule", "start": {"line": "abc"}}]
+
+    with patch("scanner.rules.is_semgrep_available", return_value=True), \
+         patch("scanner.rules.run_semgrep", return_value=mock_sg_results):
+        sg_findings = sg_detector.detect(target_file, target_file.read_text(encoding="utf-8"))
+
+    assert len(sg_findings) == 1
+    assert sg_findings[0].line >= 1
+
+
+# --- 8. Non-dict runner outputs and float inf line number handling ---
+
+def test_detectors_skip_non_dict_raw_results(tmp_path):
+    """Assert GitleaksDetector and SemgrepDetector skip non-dict elements in raw results."""
+    target_file = tmp_path / "app.py"
+    target_file.write_text("print('test')\n", encoding="utf-8")
+
+    # Gitleaks detector with [None, "oops", {valid}]
+    gl_rule = RuleDefinition(
+        id="gl-valid-rule",
+        title="Gitleaks Rule",
+        severity=Severity.HIGH,
+        message="Secret found.",
+        recommendation="Rotate secret.",
+        engine="gitleaks",
+        pattern="",
+        file_globs=["*"],
+    )
+    gl_detector = GitleaksDetector([gl_rule])
+    mock_gl_results = [None, "oops", {"RuleID": "gl-valid-rule", "StartLine": 5}]
+
+    with patch("scanner.rules.is_gitleaks_available", return_value=True), \
+         patch("scanner.rules.run_gitleaks", return_value=mock_gl_results):
+        gl_findings = gl_detector.detect(target_file, target_file.read_text(encoding="utf-8"))
+
+    assert len(gl_findings) == 1
+    assert gl_findings[0].rule_id == "gl-valid-rule"
+    assert gl_findings[0].line == 5
+
+    # Semgrep detector with [None, "oops", {valid}]
+    sg_rule = RuleDefinition(
+        id="sg-valid-rule",
+        title="Semgrep Rule",
+        severity=Severity.MEDIUM,
+        message="Code issue.",
+        recommendation="Fix code.",
+        engine="semgrep",
+        pattern="",
+        file_globs=["*"],
+    )
+    sg_detector = SemgrepDetector([sg_rule])
+    mock_sg_results = [None, "oops", {"check_id": "sg-valid-rule", "start": {"line": 10}}]
+
+    with patch("scanner.rules.is_semgrep_available", return_value=True), \
+         patch("scanner.rules.run_semgrep", return_value=mock_sg_results):
+        sg_findings = sg_detector.detect(target_file, target_file.read_text(encoding="utf-8"))
+
+    assert len(sg_findings) == 1
+    assert sg_findings[0].rule_id == "sg-valid-rule"
+    assert sg_findings[0].line == 10
+
+
+def test_safe_int_line_float_inf_does_not_raise(tmp_path):
+    """Assert line=float('inf') does not raise OverflowError and safely falls back."""
+    assert _safe_int_line(float("inf")) == 1
+    assert _safe_int_line(float("-inf")) == 1
+    assert _safe_int_line(float("inf"), default=42) == 42
+
+    target_file = tmp_path / "app.py"
+    target_file.write_text("print('test')\n", encoding="utf-8")
+
+    # Gitleaks with StartLine=float("inf")
+    gl_rule = RuleDefinition(
+        id="gl-inf-rule",
+        title="Gitleaks Rule",
+        severity=Severity.HIGH,
+        message="Secret found.",
+        recommendation="Rotate secret.",
+        engine="gitleaks",
+        pattern="",
+        file_globs=["*"],
+    )
+    gl_detector = GitleaksDetector([gl_rule])
+    mock_gl_results = [{"RuleID": "gl-inf-rule", "StartLine": float("inf")}]
+
+    with patch("scanner.rules.is_gitleaks_available", return_value=True), \
+         patch("scanner.rules.run_gitleaks", return_value=mock_gl_results):
+        gl_findings = gl_detector.detect(target_file, target_file.read_text(encoding="utf-8"))
+
+    assert len(gl_findings) == 1
+    assert gl_findings[0].line == 1
+
+    # Semgrep with start={"line": float("inf")}
+    sg_rule = RuleDefinition(
+        id="sg-inf-rule",
+        title="Semgrep Rule",
+        severity=Severity.MEDIUM,
+        message="Code issue.",
+        recommendation="Fix code.",
+        engine="semgrep",
+        pattern="",
+        file_globs=["*"],
+    )
+    sg_detector = SemgrepDetector([sg_rule])
+    mock_sg_results = [{"check_id": "sg-inf-rule", "start": {"line": float("inf")}}]
+
+    with patch("scanner.rules.is_semgrep_available", return_value=True), \
+         patch("scanner.rules.run_semgrep", return_value=mock_sg_results):
+        sg_findings = sg_detector.detect(target_file, target_file.read_text(encoding="utf-8"))
+
+    assert len(sg_findings) == 1
+    assert sg_findings[0].line == 1
+
+
