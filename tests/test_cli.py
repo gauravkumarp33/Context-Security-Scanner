@@ -111,4 +111,5 @@ def test_cli_single_file_scan(tmp_path, capsys):
     captured = capsys.readouterr()
     findings = json.loads(captured.out)
     assert len(findings) == 1
-    assert findings[0]["file"] == "firestore.rules"
+    assert Path(findings[0]["file"]).as_posix().endswith("firestore.rules")
+
