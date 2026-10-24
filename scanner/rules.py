@@ -166,7 +166,7 @@ def _safe_int_line(val: Any, default: int = 1) -> int:
     try:
         line = int(val)
         return max(1, line)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return max(1, default)
 
 
@@ -187,6 +187,8 @@ class GitleaksDetector(Detector):
         findings: List[RawFinding] = []
         raw_results = run_gitleaks(file_path, config_path=self.config_path)
         for res in raw_results:
+            if not isinstance(res, dict):
+                continue
             rule_id = res.get("RuleID", "gitleaks-secret")
             rule = self.rules.get(rule_id)
             line = _safe_int_line(res.get("StartLine", 1))
@@ -231,6 +233,8 @@ class SemgrepDetector(Detector):
         findings: List[RawFinding] = []
         raw_results = run_semgrep(file_path, config_path=self.config_path)
         for res in raw_results:
+            if not isinstance(res, dict):
+                continue
             rule_id = res.get("check_id", "semgrep-finding")
             rule = self.rules.get(rule_id)
             start_val = res.get("start")
