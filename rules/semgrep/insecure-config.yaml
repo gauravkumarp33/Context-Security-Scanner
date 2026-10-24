@@ -1,0 +1,6 @@
+rules:
+  - id: config-github-actions-pull-request-target
+    languages: [yaml]
+    message: "GitHub Actions workflow triggers on pull_request_target with elevated repository permissions."
+    severity: ERROR
+    pattern: "pull_request_target:"

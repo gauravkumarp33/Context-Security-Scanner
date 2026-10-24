@@ -18,6 +18,22 @@ LOCAL_TESTING_LOWERABLE_CATEGORIES: Set[str] = {
 
 RULE_CATEGORY_MAP: Dict[str, str] = {
     "firebase-open-access": "public_access",
+    "firebase-auth-without-authorization": "public_access",
+    "secret-aws-access-key": "exposed_secret",
+    "secret-github-token": "exposed_secret",
+    "secret-stripe-key": "exposed_secret",
+    "secret-private-key": "exposed_secret",
+    "secret-db-connection-string": "exposed_secret",
+    "secret-generic-password": "exposed_secret",
+    "code-debug-mode": "debug_mode",
+    "code-tls-verify-disabled": "disabled_tls",
+    "code-hardcoded-secret-key": "exposed_secret",
+    "code-cors-wildcard": "insecure_config",
+    "config-docker-db-port-exposed": "insecure_config",
+    "config-db-password-env": "exposed_secret",
+    "config-docker-container-root": "insecure_config",
+    "config-github-actions-pull-request-target": "insecure_config",
+    "config-github-actions-unpinned": "insecure_config",
 }
 
 SEVERITY_ORDER: List[Severity] = [

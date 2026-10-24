@@ -1,0 +1,94 @@
+rules:
+  - id: code-sql-injection
+    title: "SQL Injection via String Concatenation or Formatting"
+    severity: "high"
+    message: "Possible SQL injection: SQL query constructed via string formatting or concatenation."
+    recommendation: "Use parameterized queries or an ORM with query parameter binding instead of string concatenation."
+    engine: "regex"
+    pattern: '(?i)(?:execute|cursor\.execute|query)\s*\(\s*(?:f["''].*?(?:SELECT|INSERT|UPDATE|DELETE).*?\{|["''].*?(?:SELECT|INSERT|UPDATE|DELETE).*?["'']\s*\+|.*?%\s*\(|.*?\+\s*["''].*?(?:SELECT|INSERT|UPDATE|DELETE))'
+    file_globs:
+      - "*.py"
+      - "*.js"
+      - "*.ts"
+
+  - id: code-eval-exec
+    title: "Dynamic Code Execution (eval/exec)"
+    severity: "high"
+    message: "Dangerous execution of arbitrary code via eval() or exec()."
+    recommendation: "Avoid eval() and exec(); parse data safely using structured parsers like json.loads() or ast.literal_eval()."
+    engine: "regex"
+    pattern: '(?<![a-zA-Z0-9_.])(?:eval|exec)\s*\([^)]+\)'
+    file_globs:
+      - "*.py"
+      - "*.js"
+      - "*.ts"
+
+  - id: code-subprocess-shell
+    title: "Subprocess Execution with shell=True"
+    severity: "high"
+    message: "Execution of subprocess with shell=True invites command injection vulnerabilities."
+    recommendation: "Pass shell=False and pass command and arguments as a sequence (list of strings)."
+    engine: "regex"
+    pattern: 'subprocess\.(?:Popen|run|call|check_call|check_output)\s*\([^)]*shell\s*=\s*True'
+    file_globs:
+      - "*.py"
+
+  - id: code-hardcoded-secret-key
+    title: "Hardcoded Application Secret Key"
+    severity: "high"
+    message: "Hardcoded SECRET_KEY detected in application source code."
+    recommendation: "Load SECRET_KEY from environment variables (e.g., os.environ.get('SECRET_KEY'))."
+    engine: "regex"
+    pattern: '(?i)\bSECRET_KEY\s*=\s*["''][^"''\r\n]{4,}["'']'
+    file_globs:
+      - "*.py"
+      - "*.js"
+      - "*.ts"
+
+  - id: code-debug-mode
+    title: "Debug Mode Enabled in Source Code"
+    severity: "medium"
+    message: "Application debug mode explicitly enabled (DEBUG = True)."
+    recommendation: "Ensure debug mode is disabled in production environments."
+    engine: "regex"
+    pattern: '(?i)(?:^|[\s,;])DEBUG\s*=\s*True\b'
+    file_globs:
+      - "*.py"
+      - "*.js"
+      - "*.ts"
+      - "*.env"
+      - "*.ini"
+
+  - id: code-tls-verify-disabled
+    title: "TLS Certificate Verification Disabled"
+    severity: "high"
+    message: "TLS certificate verification disabled via verify=False."
+    recommendation: "Enable TLS certificate validation (verify=True or provide a trusted CA bundle) to prevent MitM attacks."
+    engine: "regex"
+    pattern: 'verify\s*=\s*False\b'
+    file_globs:
+      - "*.py"
+
+  - id: code-weak-password-hash
+    title: "Weak Hash Algorithm (MD5/SHA1)"
+    severity: "medium"
+    message: "Weak cryptographic hash algorithm (MD5 or SHA1) detected."
+    recommendation: "Use modern cryptographic password hashing functions such as Argon2id, bcrypt, or PBKDF2."
+    engine: "regex"
+    pattern: '(?i)(?:hashlib\.(?:md5|sha1)\s*\(|crypto\.createHash\s*\(\s*["''](?:md5|sha1)["'']\))'
+    file_globs:
+      - "*.py"
+      - "*.js"
+      - "*.ts"
+
+  - id: code-cors-wildcard
+    title: "Wildcard CORS Policy"
+    severity: "medium"
+    message: "Overly permissive CORS configuration allowing all origins ('*')."
+    recommendation: "Restrict CORS allowed origins to explicitly trusted domain origins."
+    engine: "regex"
+    pattern: '(?i)(?:Access-Control-Allow-Origin["'']?\s*[:=]\s*["'']\*["'']|allow_origins\s*=\s*\[\s*["'']\*["'']\s*\]|origins\s*=\s*["'']\*["''])'
+    file_globs:
+      - "*.py"
+      - "*.js"
+      - "*.ts"

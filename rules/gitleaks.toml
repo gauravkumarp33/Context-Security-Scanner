@@ -1,0 +1,28 @@
+title = "Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "secret-aws-access-key"
+description = "Hardcoded AWS Access Key ID detected."
+regex = '''(?i)(?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}'''
+tags = ["key", "AWS"]
+
+[[rules]]
+id = "secret-github-token"
+description = "Hardcoded GitHub token detected."
+regex = '''(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,}|github_pat_[A-Za-z0-9_]{22,}'''
+tags = ["key", "GitHub"]
+
+[[rules]]
+id = "secret-stripe-key"
+description = "Hardcoded Stripe API key detected."
+regex = '''(?:sk|pk)_(?:test|live)_[0-9a-zA-Z]{24,}'''
+tags = ["key", "Stripe"]
+
+[[rules]]
+id = "secret-private-key"
+description = "Hardcoded private cryptographic key header detected."
+regex = '''-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'''
+tags = ["key", "PrivateKey"]

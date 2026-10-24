@@ -1,0 +1,63 @@
+rules:
+  - id: code-sql-injection
+    languages: [python, javascript, typescript]
+    message: "Possible SQL injection: SQL query constructed via string formatting or concatenation."
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: $CURSOR.execute(f"...", ...)
+          - pattern: $CURSOR.execute("..." + ..., ...)
+          - pattern: $DB.query(f"...", ...)
+
+  - id: code-eval-exec
+    languages: [python, javascript, typescript]
+    message: "Dangerous execution of arbitrary code via eval() or exec()."
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: exec(...)
+
+  - id: code-subprocess-shell
+    languages: [python]
+    message: "Execution of subprocess with shell=True invites command injection vulnerabilities."
+    severity: ERROR
+    pattern: subprocess.$FUNC(..., shell=True, ...)
+
+  - id: code-hardcoded-secret-key
+    languages: [python, javascript, typescript]
+    message: "Hardcoded SECRET_KEY detected in application source code."
+    severity: ERROR
+    pattern: SECRET_KEY = "..."
+
+  - id: code-debug-mode
+    languages: [python]
+    message: "Application debug mode explicitly enabled (DEBUG = True)."
+    severity: WARNING
+    pattern: DEBUG = True
+
+  - id: code-tls-verify-disabled
+    languages: [python]
+    message: "TLS certificate verification disabled via verify=False."
+    severity: ERROR
+    pattern: requests.$METHOD(..., verify=False, ...)
+
+  - id: code-weak-password-hash
+    languages: [python, javascript, typescript]
+    message: "Weak cryptographic hash algorithm (MD5 or SHA1) detected."
+    severity: WARNING
+    patterns:
+      - pattern-either:
+          - pattern: hashlib.md5(...)
+          - pattern: hashlib.sha1(...)
+          - pattern: crypto.createHash("md5")
+          - pattern: crypto.createHash("sha1")
+
+  - id: code-cors-wildcard
+    languages: [python, javascript, typescript]
+    message: "Overly permissive CORS configuration allowing all origins ('*')."
+    severity: WARNING
+    patterns:
+      - pattern-either:
+          - pattern: CORS($APP, origins="*", ...)
+          - pattern: allow_origins=["*"]

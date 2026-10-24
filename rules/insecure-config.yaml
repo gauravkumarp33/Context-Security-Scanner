@@ -1,0 +1,80 @@
+rules:
+  - id: firebase-open-access
+    title: "Firebase Open Access"
+    severity: "high"
+    message: "Insecure Firestore rules: open read and write access granted ('allow read, write: if true;')."
+    recommendation: "Restrict Firestore access rules by enforcing authentication and authorization checks instead of 'if true;'."
+    engine: "regex"
+    pattern: 'allow\s+(?:read\s*,\s*write|write\s*,\s*read)\s*:\s*if\s+true\s*;'
+    file_globs:
+      - "*.rules"
+
+  - id: firebase-auth-without-authorization
+    title: "Firebase Authentication Without Authorization"
+    severity: "medium"
+    message: "Authentication is not authorization: rule allows access to any authenticated user without role or ownership checks ('if request.auth != null;')."
+    recommendation: "Enforce ownership or role-based checks (e.g., request.auth.uid == userId)."
+    engine: "regex"
+    pattern: 'allow\s+(?:read\s*,\s*write|write\s*,\s*read|read|write)\s*:\s*if\s+request\.auth\s*!=\s*null\s*;'
+    file_globs:
+      - "*.rules"
+
+  - id: config-docker-db-port-exposed
+    title: "Database Port Exposed on All Host Interfaces"
+    severity: "high"
+    message: "Database port is exposed on 0.0.0.0 (all interfaces) in container configuration."
+    recommendation: "Bind database ports to localhost (127.0.0.1) or rely exclusively on internal Docker bridge networks."
+    engine: "regex"
+    pattern: '(?<![0-9a-zA-Z\.\-_:])(?:0\.0\.0\.0:)?(?:5432|3306|27017|6379|9200):(?:5432|3306|27017|6379|9200)\b'
+    file_globs:
+      - "docker-compose*.yml"
+      - "docker-compose*.yaml"
+      - "compose*.yml"
+      - "compose*.yaml"
+
+  - id: config-db-password-env
+    title: "Hardcoded Database Password in Environment Configuration"
+    severity: "high"
+    message: "Hardcoded database password specified directly in environment configuration."
+    recommendation: "Reference secrets via external environment variables or docker secrets."
+    engine: "regex"
+    pattern: '(?i)(?:POSTGRES_PASSWORD|MYSQL_ROOT_PASSWORD|MYSQL_PASSWORD|MONGO_INITDB_ROOT_PASSWORD|REDIS_PASSWORD)\s*[:=]\s*["'']?([^"''\s\r\n]{4,})["'']?'
+    file_globs:
+      - "docker-compose*.yml"
+      - "docker-compose*.yaml"
+      - "*.env"
+      - ".env*"
+
+  - id: config-docker-container-root
+    title: "Container Running as Root User"
+    severity: "medium"
+    message: "Container explicitly configured to run as root user."
+    recommendation: "Create and switch to a dedicated non-root user using 'USER <username>'."
+    engine: "regex"
+    pattern: '(?i)(?:^\s*USER\s+root\b|user\s*:\s*["'']?0(?::0)?["'']?|user\s*:\s*["'']?root["'']?)'
+    file_globs:
+      - "Dockerfile*"
+      - "docker-compose*.yml"
+      - "docker-compose*.yaml"
+
+  - id: config-github-actions-pull-request-target
+    title: "Dangerous GitHub Actions pull_request_target Trigger"
+    severity: "high"
+    message: "GitHub Actions workflow triggers on pull_request_target with elevated repository permissions."
+    recommendation: "Use pull_request trigger instead, or avoid checking out and executing untrusted PR code."
+    engine: "regex"
+    pattern: 'pull_request_target\s*:'
+    file_globs:
+      - ".github/workflows/*.yml"
+      - ".github/workflows/*.yaml"
+
+  - id: config-github-actions-unpinned
+    title: "Unpinned Third-Party GitHub Action"
+    severity: "medium"
+    message: "Third-party GitHub Action reference is unpinned (using mutable tag or branch instead of full commit SHA)."
+    recommendation: "Pin actions to full length commit SHAs (e.g. actions/checkout@8e5e7e5...)."
+    engine: "regex"
+    pattern: 'uses\s*:\s*[^@\s''"]+@(?!([0-9a-f]{40}))(?:v[0-9]+|main|master|latest)\b'
+    file_globs:
+      - ".github/workflows/*.yml"
+      - ".github/workflows/*.yaml"
