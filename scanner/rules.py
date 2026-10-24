@@ -161,6 +161,15 @@ class RegexDetector(Detector):
         return False
 
 
+def _safe_int_line(val: Any, default: int = 1) -> int:
+    """Safely convert a value to a 1-based positive integer line number."""
+    try:
+        line = int(val)
+        return max(1, line)
+    except (ValueError, TypeError):
+        return max(1, default)
+
+
 class GitleaksDetector(Detector):
     """Detector wrapping the Gitleaks runner."""
 
@@ -180,7 +189,7 @@ class GitleaksDetector(Detector):
         for res in raw_results:
             rule_id = res.get("RuleID", "gitleaks-secret")
             rule = self.rules.get(rule_id)
-            line = int(res.get("StartLine", 1))
+            line = _safe_int_line(res.get("StartLine", 1))
 
             message = rule.message if rule else "Hardcoded secret detected by Gitleaks."
             recommendation = (
@@ -193,7 +202,7 @@ class GitleaksDetector(Detector):
             findings.append(
                 RawFinding(
                     rule_id=rule_id,
-                    line=max(1, line),
+                    line=line,
                     message=message,
                     recommendation=recommendation,
                     severity=severity,
@@ -224,9 +233,11 @@ class SemgrepDetector(Detector):
         for res in raw_results:
             rule_id = res.get("check_id", "semgrep-finding")
             rule = self.rules.get(rule_id)
-            line = int(res.get("start", {}).get("line", 1))
+            start_val = res.get("start")
+            start_line = start_val.get("line", 1) if isinstance(start_val, dict) else 1
+            line = _safe_int_line(start_line)
 
-            message = rule.message if rule else res.get("extra", {}).get("message", "Semgrep security issue.")
+            message = rule.message if rule else "Semgrep security issue."
             recommendation = (
                 rule.recommendation
                 if rule
@@ -237,7 +248,7 @@ class SemgrepDetector(Detector):
             findings.append(
                 RawFinding(
                     rule_id=rule_id,
-                    line=max(1, line),
+                    line=line,
                     message=message,
                     recommendation=recommendation,
                     severity=severity,
