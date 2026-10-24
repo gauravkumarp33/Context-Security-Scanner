@@ -47,3 +47,31 @@ Detection rules are mapped to specific categories in `scanner/severity.py`:
 | `firebase-open-access` | `public_access` | `high` | `high` | `medium` | `high` |
 
 Unmapped rule IDs receive no category and their severity is never altered by environment policies.
+
+---
+
+## 4. File-Type Tags
+
+The scanner provides semantic, multi-label file classification in `scanner/filetypes.py` (`get_file_types(path)` and `list_files_by_type(root)`). Security detection rules and integrations (e.g. Gitleaks, Semgrep) can target files by these semantic tags:
+
+| Tag | Matched Patterns / Criteria | Example |
+|---|---|---|
+| `docker` | `Dockerfile*`, `Containerfile*` (excluding `.bak`/`.tmp`), and any `compose` file | `Dockerfile.prod`, `Containerfile`, `compose.yaml` |
+| `compose` | `docker-compose*.yml/yaml`, `compose*.yml/yaml` | `docker-compose.prod.yml`, `compose.yaml` |
+| `ci` | Umbrella tag for all supported CI/CD platforms | `.github/workflows/deploy.yml`, `.gitlab-ci.yml` |
+| `github-actions` | `.github/workflows/*.yml/yaml` | `.github/workflows/ci.yml` |
+| `gitlab-ci` | `.gitlab-ci*.yml/yaml` | `.gitlab-ci.yml` |
+| `circleci` | `.circleci/*.yml/yaml` | `.circleci/config.yml` |
+| `bitbucket-pipelines` | `bitbucket-pipelines.yml/yaml` | `bitbucket-pipelines.yml` |
+| `azure-pipelines` | `azure-pipelines*.yml/yaml`, `.azure-pipelines*.yml/yaml` | `azure-pipelines.yml` |
+| `kubernetes` | Path segments `k8s/`, `kubernetes/` OR YAML containing `apiVersion:` + `kind:` (first 4 KB sniff) | `k8s/deployment.yaml`, `deploy/pod.yml` |
+| `terraform` | `*.tf`, `*.tfvars`, `*.hcl` | `main.tf`, `terraform.tfvars` |
+| `env` | `*.env`, `.env*` | `.env`, `.env.production` |
+| `yaml` | `*.yaml`, `*.yml` | `config.yaml`, `service.yml` |
+| `json` | `*.json` | `settings.json`, `firebase.json` |
+| `toml` | `*.toml` | `pyproject.toml`, `gitleaks.toml` |
+| `firebase` | `firebase.json`, `.firebaserc`, `*.rules` | `firestore.rules`, `firebase.json` |
+| `config` | Structured config (`yaml`, `json`, `toml`, `env`, `ini`, `conf`, `cfg`, `ci`, `compose`, `k8s`, `terraform`, `firebase`) | `app.conf`, `settings.json`, `compose.yaml` |
+| `code` | Source code (`.py`, `.js`, `.ts`, `.sh`, `.bash`, `.go`, `.java`, `.php`, `.rb`, `.cs`) | `server.py`, `script.sh`, `main.go` |
+| `secret-file` | Keys, certs, and package credentials (`id_rsa`, `id_ed25519`, `*.pem`, `*.key`, `*.crt`, `.npmrc`, `.pypirc`, `.netrc`) | `id_rsa`, `server.key`, `.npmrc` |
+
