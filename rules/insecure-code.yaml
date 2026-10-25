@@ -2,54 +2,84 @@ rules:
   - id: code-sql-injection
     title: "SQL Injection via String Concatenation or Formatting"
     severity: "high"
-    message: "Possible SQL injection: SQL query constructed via string formatting or concatenation."
-    recommendation: "Use parameterized queries or an ORM with query parameter binding instead of string concatenation."
+    message: "Dynamic SQL query constructed via string formatting or concatenation exposes database contents to arbitrary SQL injection attacks."
+    recommendation: "Use parameterized queries with bind variables or an ORM instead of manual string formatting. Replace with cursor.execute('SELECT * FROM users WHERE id = %s', (user_id,))."
     engine: "regex"
     pattern: '(?i)(?:execute|cursor\.execute|query)\s*\(\s*(?:f["''].*?(?:SELECT|INSERT|UPDATE|DELETE).*?\{|["''].*?(?:SELECT|INSERT|UPDATE|DELETE).*?["'']\s*\+|.*?%\s*\(|.*?\+\s*["''].*?(?:SELECT|INSERT|UPDATE|DELETE))'
     file_globs:
       - "*.py"
       - "*.js"
       - "*.ts"
+    raise_in_production: true
+    what_it_detects: "SQL queries constructed via dynamic string formatting, f-strings, or string concatenation."
+    why_risky: "Attackers can manipulate query structure to bypass authentication, exfiltrate confidential data, or destroy tables."
+    bad_example: |
+      cursor.execute(f"SELECT * FROM users WHERE username = '{user_input}'")
+    fixed_example: |
+      cursor.execute("SELECT * FROM users WHERE username = %s", (user_input,))
 
   - id: code-eval-exec
     title: "Dynamic Code Execution (eval/exec)"
     severity: "high"
-    message: "Dangerous execution of arbitrary code via eval() or exec()."
-    recommendation: "Avoid eval() and exec(); parse data safely using structured parsers like json.loads() or ast.literal_eval()."
+    message: "Dynamic code execution via eval() or exec() allows untrusted input to run arbitrary commands with application privileges."
+    recommendation: "Replace eval() and exec() with safe structured parsers like json.loads() or ast.literal_eval()."
     engine: "regex"
     pattern: '(?<![a-zA-Z0-9_.])(?:eval|exec)\s*\([^)]+\)'
     file_globs:
       - "*.py"
       - "*.js"
       - "*.ts"
+    raise_in_production: true
+    what_it_detects: "Invocations of eval() or exec() passing dynamic input expressions."
+    why_risky: "Executing unvalidated user input as code grants adversaries full remote code execution."
+    bad_example: |
+      user_obj = eval(user_payload)
+    fixed_example: |
+      import json
+      user_obj = json.loads(user_payload)
 
   - id: code-subprocess-shell
     title: "Subprocess Execution with shell=True"
     severity: "high"
-    message: "Execution of subprocess with shell=True invites command injection vulnerabilities."
-    recommendation: "Pass shell=False and pass command and arguments as a sequence (list of strings)."
+    message: "Subprocess execution with shell=True invites command injection by executing commands through an underlying system shell."
+    recommendation: "Pass shell=False and provide the command and arguments as a list of strings. Replace with subprocess.run(['ls', target_dir], shell=False)."
     engine: "regex"
     pattern: 'subprocess\.(?:Popen|run|call|check_call|check_output)\s*\([^)]*shell\s*=\s*True'
     file_globs:
       - "*.py"
+    raise_in_production: true
+    what_it_detects: "Subprocess calls where shell=True is explicitly configured."
+    why_risky: "Command arguments containing shell metacharacters can spawn arbitrary host commands."
+    bad_example: |
+      subprocess.run(f"cat {user_file}", shell=True)
+    fixed_example: |
+      subprocess.run(["cat", user_file], shell=False)
 
   - id: code-hardcoded-secret-key
     title: "Hardcoded Application Secret Key"
     severity: "high"
-    message: "Hardcoded SECRET_KEY detected in application source code."
-    recommendation: "Load SECRET_KEY from environment variables (e.g., os.environ.get('SECRET_KEY'))."
+    message: "Hardcoded SECRET_KEY detected in source code compromises cryptographic session signatures and token validation."
+    recommendation: "Load SECRET_KEY from environment variables using os.environ.get('SECRET_KEY')."
     engine: "regex"
     pattern: '(?i)\bSECRET_KEY\s*=\s*["''][^"''\r\n]{4,}["'']'
     file_globs:
       - "*.py"
       - "*.js"
       - "*.ts"
+    raise_in_production: true
+    what_it_detects: "Hardcoded assignments to SECRET_KEY in source files."
+    why_risky: "Knowing the secret key allows adversaries to forge authentication cookies and sign malicious tokens."
+    bad_example: |
+      SECRET_KEY = "django-insecure-hardcoded-secret-key-12345"
+    fixed_example: |
+      import os
+      SECRET_KEY = os.environ.get("SECRET_KEY")
 
   - id: code-debug-mode
     title: "Debug Mode Enabled in Source Code"
     severity: "medium"
-    message: "Application debug mode explicitly enabled (DEBUG = True)."
-    recommendation: "Ensure debug mode is disabled in production environments."
+    message: "Application debug mode enabled in source code exposes internal stack traces, interactive debuggers, and sensitive server details."
+    recommendation: "Set DEBUG = False or load the flag from an environment variable like os.getenv('DEBUG', 'False') == 'True'."
     engine: "regex"
     pattern: '(?i)(?:^|[\s,;])DEBUG\s*=\s*True\b'
     file_globs:
@@ -58,37 +88,68 @@ rules:
       - "*.ts"
       - "*.env"
       - "*.ini"
+    raise_in_production: true
+    what_it_detects: "Explicit DEBUG = True declarations in application code or configuration."
+    why_risky: "Enabled debug modes expose detailed error traces and interactive consoles that attackers exploit."
+    bad_example: |
+      DEBUG = True
+    fixed_example: |
+      import os
+      DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1")
 
   - id: code-tls-verify-disabled
     title: "TLS Certificate Verification Disabled"
     severity: "high"
-    message: "TLS certificate verification disabled via verify=False."
-    recommendation: "Enable TLS certificate validation (verify=True or provide a trusted CA bundle) to prevent MitM attacks."
+    message: "Disabling TLS certificate verification via verify=False leaves network communications vulnerable to man-in-the-middle attacks."
+    recommendation: "Enable certificate verification by setting verify=True or specify a trusted custom CA bundle path."
     engine: "regex"
     pattern: 'verify\s*=\s*False\b'
     file_globs:
       - "*.py"
+    raise_in_production: true
+    what_it_detects: "HTTP client requests with TLS certificate verification explicitly turned off."
+    why_risky: "Adversaries positioned on the local network can intercept, inspect, and modify API traffic."
+    bad_example: |
+      response = requests.get("https://api.internal/v1", verify=False)
+    fixed_example: |
+      response = requests.get("https://api.internal/v1", verify=True)
 
   - id: code-weak-password-hash
     title: "Weak Hash Algorithm (MD5/SHA1)"
     severity: "medium"
-    message: "Weak cryptographic hash algorithm (MD5 or SHA1) detected."
-    recommendation: "Use modern cryptographic password hashing functions such as Argon2id, bcrypt, or PBKDF2."
+    message: "Using weak hash algorithms like MD5 or SHA1 for passwords allows rapid offline cracking through precomputed rainbow tables."
+    recommendation: "Replace MD5 or SHA1 with modern password hashing algorithms such as Argon2id or bcrypt."
     engine: "regex"
     pattern: '(?i)(?:hashlib\.(?:md5|sha1)\s*\(|crypto\.createHash\s*\(\s*["''](?:md5|sha1)["'']\))'
     file_globs:
       - "*.py"
       - "*.js"
       - "*.ts"
+    raise_in_production: false
+    what_it_detects: "Invocations of MD5 or SHA1 cryptographic hashing routines."
+    why_risky: "MD5 and SHA1 suffer from proven collision vulnerabilities and can be cracked rapidly on commodity hardware."
+    bad_example: |
+      import hashlib
+      pwd_hash = hashlib.md5(password.encode()).hexdigest()
+    fixed_example: |
+      import bcrypt
+      pwd_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
 
   - id: code-cors-wildcard
     title: "Wildcard CORS Policy"
     severity: "medium"
-    message: "Overly permissive CORS configuration allowing all origins ('*')."
-    recommendation: "Restrict CORS allowed origins to explicitly trusted domain origins."
+    message: "Wildcard CORS policy allows unauthorized external websites to read sensitive API responses on behalf of authenticated users."
+    recommendation: "Replace '*' with an explicit whitelist of trusted domain origins in the CORS configuration."
     engine: "regex"
     pattern: '(?i)(?:Access-Control-Allow-Origin["'']?\s*[:=]\s*["'']\*["'']|allow_origins\s*=\s*\[\s*["'']\*["'']\s*\]|origins\s*=\s*["'']\*["''])'
     file_globs:
       - "*.py"
       - "*.js"
       - "*.ts"
+    raise_in_production: true
+    what_it_detects: "CORS configurations granting unrestricted wildcard ('*') origin access."
+    why_risky: "Permissive CORS policies allow malicious third-party origins to read authenticated private responses."
+    bad_example: |
+      response.headers["Access-Control-Allow-Origin"] = "*"
+    fixed_example: |
+      response.headers["Access-Control-Allow-Origin"] = "https://app.example.com"

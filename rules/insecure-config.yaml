@@ -2,28 +2,60 @@ rules:
   - id: firebase-open-access
     title: "Firebase Open Access"
     severity: "high"
-    message: "Insecure Firestore rules: open read and write access granted ('allow read, write: if true;')."
-    recommendation: "Restrict Firestore access rules by enforcing authentication and authorization checks instead of 'if true;'."
+    message: "Firestore rule grants open read and write access ('allow read, write: if true;'), allowing unrestricted public tampering with database documents."
+    recommendation: "Replace 'if true;' with user authentication checks such as 'allow read, write: if request.auth != null;'. Restrict access based on document ownership."
     engine: "regex"
     pattern: 'allow\s+(?:read\s*,\s*write|write\s*,\s*read)\s*:\s*if\s+true\s*;'
     file_globs:
       - "*.rules"
+    raise_in_production: false
+    what_it_detects: "Firestore security rules with allow read, write: if true;."
+    why_risky: "Anyone on the Internet can read, modify, and delete all application data stored in Firestore."
+    bad_example: |
+      rules_version = '2';
+      service cloud.firestore {
+        match /databases/{database}/documents {
+          match /{document=**} {
+            allow read, write: if true;
+          }
+        }
+      }
+    fixed_example: |
+      rules_version = '2';
+      service cloud.firestore {
+        match /databases/{database}/documents {
+          match /users/{userId} {
+            allow read, write: if request.auth != null && request.auth.uid == userId;
+          }
+        }
+      }
 
   - id: firebase-auth-without-authorization
     title: "Firebase Authentication Without Authorization"
     severity: "medium"
-    message: "Authentication is not authorization: rule allows access to any authenticated user without role or ownership checks ('if request.auth != null;')."
-    recommendation: "Enforce ownership or role-based checks (e.g., request.auth.uid == userId)."
+    message: "Firestore rule permits access to any authenticated user without verifying resource ownership, allowing unauthorized cross-tenant data access ('if request.auth != null;')."
+    recommendation: "Replace with request.auth.uid == resource.data.ownerId. Enforce role-based or ownership-based security constraints."
     engine: "regex"
     pattern: 'allow\s+(?:read\s*,\s*write|write\s*,\s*read|read|write)\s*:\s*if\s+request\.auth\s*!=\s*null\s*;'
     file_globs:
       - "*.rules"
+    raise_in_production: true
+    what_it_detects: "Firestore security rules checking only request.auth != null without ownership checks."
+    why_risky: "Any authenticated user can read or overwrite data belonging to other users or tenants."
+    bad_example: |
+      match /documents/{docId} {
+        allow read, write: if request.auth != null;
+      }
+    fixed_example: |
+      match /documents/{docId} {
+        allow read, write: if request.auth != null && request.auth.uid == resource.data.ownerId;
+      }
 
   - id: config-docker-db-port-exposed
     title: "Database Port Exposed on All Host Interfaces"
     severity: "high"
-    message: "Database port is exposed on 0.0.0.0 (all interfaces) in container configuration."
-    recommendation: "Bind database ports to localhost (127.0.0.1) or rely exclusively on internal Docker bridge networks."
+    message: "Database port exposed on 0.0.0.0 allows external network clients to attempt direct connections to internal database services."
+    recommendation: "Bind the port to localhost using '127.0.0.1:5432:5432' or rely exclusively on internal Docker networks."
     engine: "regex"
     pattern: '(?<![0-9a-zA-Z\.\-_:])(?:0\.0\.0\.0:)?(?:5432|3306|27017|6379|9200):(?:5432|3306|27017|6379|9200)\b'
     file_globs:
@@ -31,12 +63,27 @@ rules:
       - "docker-compose*.yaml"
       - "compose*.yml"
       - "compose*.yaml"
+    raise_in_production: true
+    what_it_detects: "Docker compose port mappings binding database ports to all interfaces (0.0.0.0)."
+    why_risky: "Exposed database ports invite brute-force credential stuffing and direct network exploits."
+    bad_example: |
+      services:
+        db:
+          image: postgres:15
+          ports:
+            - "5432:5432"
+    fixed_example: |
+      services:
+        db:
+          image: postgres:15
+          ports:
+            - "127.0.0.1:5432:5432"
 
   - id: config-db-password-env
     title: "Hardcoded Database Password in Environment Configuration"
     severity: "high"
-    message: "Hardcoded database password specified directly in environment configuration."
-    recommendation: "Reference secrets via external environment variables or docker secrets."
+    message: "Hardcoded database password in environment configuration files exposes database credentials to anyone with repository access."
+    recommendation: "Reference secrets via external environment variables like '${POSTGRES_PASSWORD}' or use Docker secrets."
     engine: "regex"
     pattern: '(?i)(?:POSTGRES_PASSWORD|MYSQL_ROOT_PASSWORD|MYSQL_PASSWORD|MONGO_INITDB_ROOT_PASSWORD|REDIS_PASSWORD)\s*[:=]\s*["'']?([^"''\s\r\n]{4,})["'']?'
     file_globs:
@@ -44,37 +91,80 @@ rules:
       - "docker-compose*.yaml"
       - "*.env"
       - ".env*"
+    raise_in_production: true
+    what_it_detects: "Hardcoded database password assignments in compose or env files."
+    why_risky: "Passwords committed to repository files remain visible in revision history."
+    bad_example: |
+      services:
+        db:
+          environment:
+            POSTGRES_PASSWORD: "mysecretpassword123"
+    fixed_example: |
+      services:
+        db:
+          environment:
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
 
   - id: config-docker-container-root
     title: "Container Running as Root User"
     severity: "medium"
-    message: "Container explicitly configured to run as root user."
-    recommendation: "Create and switch to a dedicated non-root user using 'USER <username>'."
+    message: "Container configured to execute as root user allows breakout vulnerabilities to gain privileged root access on the container host."
+    recommendation: "Create a non-privileged user and switch to it using 'USER <username>' in the container configuration."
     engine: "regex"
     pattern: '(?i)(?:^\s*USER\s+root\b|user\s*:\s*["'']?0(?::0)?["'']?|user\s*:\s*["'']?root["'']?)'
     file_globs:
       - "Dockerfile*"
       - "docker-compose*.yml"
       - "docker-compose*.yaml"
+    raise_in_production: true
+    what_it_detects: "USER root or user: root/0 declarations in Dockerfiles or compose files."
+    why_risky: "Root processes inside containers pose serious security risks if container isolation is bypassed."
+    bad_example: |
+      FROM alpine:latest
+      USER root
+      CMD ["sh"]
+    fixed_example: |
+      FROM alpine:latest
+      RUN adduser -D appuser
+      USER appuser
+      CMD ["sh"]
 
   - id: config-github-actions-pull-request-target
     title: "Dangerous GitHub Actions pull_request_target Trigger"
     severity: "high"
-    message: "GitHub Actions workflow triggers on pull_request_target with elevated repository permissions."
-    recommendation: "Use pull_request trigger instead, or avoid checking out and executing untrusted PR code."
+    message: "Workflow triggers on pull_request_target with elevated repository write permissions, allowing untrusted PR code to steal repository secrets."
+    recommendation: "Replace pull_request_target with pull_request, or do not check out and execute code from untrusted forks."
     engine: "regex"
     pattern: 'pull_request_target\s*:'
     file_globs:
       - ".github/workflows/*.yml"
       - ".github/workflows/*.yaml"
+    raise_in_production: true
+    what_it_detects: "GitHub Actions workflows triggering on pull_request_target."
+    why_risky: "Malicious pull request authors can exfiltrate repository secrets by triggering workflows with write access."
+    bad_example: |
+      name: CI
+      on:
+        pull_request_target:
+    fixed_example: |
+      name: CI
+      on:
+        pull_request:
 
   - id: config-github-actions-unpinned
     title: "Unpinned Third-Party GitHub Action"
     severity: "medium"
-    message: "Third-party GitHub Action reference is unpinned (using mutable tag or branch instead of full commit SHA)."
-    recommendation: "Pin actions to full length commit SHAs (e.g. actions/checkout@8e5e7e5...)."
+    message: "Third-party GitHub Action referenced by mutable tag or branch allows upstream maintainer compromise to inject malicious code into CI runs."
+    recommendation: "Pin actions to an immutable 40-character commit SHA like actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab."
     engine: "regex"
     pattern: 'uses\s*:\s*[^@\s''"]+@(?!([0-9a-f]{40}))(?:v[0-9]+|main|master|latest)\b'
     file_globs:
       - ".github/workflows/*.yml"
       - ".github/workflows/*.yaml"
+    raise_in_production: true
+    what_it_detects: "GitHub Actions uses: references pointing to mutable tags (v3) or branches (main)."
+    why_risky: "Compromised tags can silently execute malicious scripts in build and deployment pipelines."
+    bad_example: |
+      - uses: actions/checkout@v3
+    fixed_example: |
+      - uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab # v3.5.2

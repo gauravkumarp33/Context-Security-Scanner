@@ -1,3 +1,4 @@
+import datetime
 import fnmatch
 import logging
 import re
@@ -11,7 +12,14 @@ from scanner.context import ProjectContext, load_project_context
 from scanner.integrations.gitleaks_runner import is_gitleaks_available, run_gitleaks
 from scanner.integrations.semgrep_runner import is_semgrep_available, run_semgrep
 from scanner.models import EnvClassification, Environment, Finding, Severity
-from scanner.severity import adjust_severity, adjust_severity_for_rule, get_rule_category
+from scanner.severity import (
+    SEVERITY_ORDER,
+    _lower_severity,
+    _raise_severity,
+    adjust_severity,
+    adjust_severity_for_rule,
+    get_rule_category,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +74,11 @@ class RuleDefinition:
     pattern: str
     file_globs: List[str]
     category: Optional[str] = None
+    raise_in_production: bool = False
+    what_it_detects: Optional[str] = None
+    why_risky: Optional[str] = None
+    bad_example: Optional[str] = None
+    fixed_example: Optional[str] = None
 
 
 @dataclass
@@ -77,6 +90,61 @@ class RawFinding:
     severity: Severity
     category: Optional[str] = None
     is_real_secret: bool = False
+    raise_in_production: bool = False
+
+
+@dataclass
+class RuleException:
+    file_glob: str
+    rule_id: str
+    reason: str
+    expiry: str
+
+
+def load_exceptions(yaml_path: Path) -> List[RuleException]:
+    """Load security exceptions from an exceptions.yaml file."""
+    exceptions: List[RuleException] = []
+    path = Path(yaml_path)
+    if not path.exists() or not path.is_file():
+        return exceptions
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if not data:
+            return exceptions
+        items = data.get("exceptions", data) if isinstance(data, dict) else data
+        if not isinstance(items, list):
+            return exceptions
+        for entry in items:
+            if not isinstance(entry, dict):
+                continue
+            file_glob = str(entry.get("file_glob") or entry.get("glob") or "*").strip()
+            rule_id = str(entry.get("rule_id") or "*").strip()
+            reason = str(entry.get("reason") or "Exception granted").strip()
+            expiry = str(entry.get("expiry") or "").strip()
+            exceptions.append(
+                RuleException(
+                    file_glob=file_glob,
+                    rule_id=rule_id,
+                    reason=reason,
+                    expiry=expiry,
+                )
+            )
+    except Exception as e:
+        logger.warning(f"Failed to load exceptions from {yaml_path}: {e}")
+    return exceptions
+
+
+def is_exception_active(exc: RuleException) -> bool:
+    """Return True if exception is active (not expired)."""
+    if not exc.expiry:
+        return True
+    try:
+        expiry_date = datetime.date.fromisoformat(str(exc.expiry).strip())
+        return datetime.date.today() <= expiry_date
+    except Exception as e:
+        logger.warning(f"Invalid expiry date '{exc.expiry}' in exception: {e}")
+        return False
 
 
 class Detector:
@@ -142,6 +210,7 @@ class RegexDetector(Detector):
                         severity=rule.severity,
                         category=rule.category or get_rule_category(rule.id),
                         is_real_secret=is_secret_rule,
+                        raise_in_production=rule.raise_in_production,
                     )
                 )
 
@@ -210,6 +279,7 @@ class GitleaksDetector(Detector):
                     severity=severity,
                     category="exposed_secret",
                     is_real_secret=True,
+                    raise_in_production=rule.raise_in_production if rule else False,
                 )
             )
 
@@ -258,6 +328,7 @@ class SemgrepDetector(Detector):
                     severity=severity,
                     category=rule.category if rule else get_rule_category(rule_id),
                     is_real_secret=False,
+                    raise_in_production=rule.raise_in_production if rule else False,
                 )
             )
 
@@ -330,6 +401,12 @@ def load_rules_from_yaml(yaml_path: Path) -> List[RuleDefinition]:
                 f"Invalid file_globs in rule '{item['id']}': expected list of glob strings."
             )
 
+        raise_in_production = bool(item.get("raise_in_production", False))
+        what_it_detects = item.get("what_it_detects") or str(item.get("title", ""))
+        why_risky = item.get("why_risky") or str(item.get("message", ""))
+        bad_example = item.get("bad_example")
+        fixed_example = item.get("fixed_example")
+
         rules.append(
             RuleDefinition(
                 id=str(item["id"]).strip(),
@@ -341,6 +418,11 @@ def load_rules_from_yaml(yaml_path: Path) -> List[RuleDefinition]:
                 pattern=str(item["pattern"]),
                 file_globs=[str(g) for g in file_globs],
                 category=item.get("category"),
+                raise_in_production=raise_in_production,
+                what_it_detects=what_it_detects,
+                why_risky=why_risky,
+                bad_example=bad_example,
+                fixed_example=fixed_example,
             )
         )
 
@@ -356,6 +438,8 @@ def load_all_rules(rules_dir: Path) -> List[RuleDefinition]:
 
     yaml_files = sorted(list(rules_path.glob("*.yaml")) + list(rules_path.glob("*.yml")))
     for yf in yaml_files:
+        if yf.name == "exceptions.yaml":
+            continue
         try:
             rules = load_rules_from_yaml(yf)
             all_rules.extend(rules)
@@ -370,6 +454,7 @@ def run_rules(
     files: List[Path],
     classifications: Optional[Dict[str, Union[EnvClassification, tuple]]] = None,
     rules_dir: Optional[Path] = None,
+    exceptions_file: Optional[Path] = None,
 ) -> List[Finding]:
     """
     Entry point for running security detection rules against files in a project.
@@ -380,6 +465,7 @@ def run_rules(
         classifications: Map of relative file paths to EnvClassification (or M1's raw tuple).
                          If None, missing files are classified using classify_environment with cached context.
         rules_dir: Optional path to directory containing YAML rule files.
+        exceptions_file: Optional path to exceptions.yaml file.
 
     Returns:
         List of Finding objects conforming to the contract.
@@ -419,6 +505,17 @@ def run_rules(
         _add_rules_from_dir(project_root / "rules")
     if DEFAULT_RULES_DIR.exists() and DEFAULT_RULES_DIR.is_dir():
         _add_rules_from_dir(DEFAULT_RULES_DIR)
+
+    # 2. Load exceptions from configured or default locations
+    loaded_exceptions: List[RuleException] = []
+    if exceptions_file and Path(exceptions_file).exists():
+        loaded_exceptions.extend(load_exceptions(Path(exceptions_file)))
+    if rules_dir and (Path(rules_dir) / "exceptions.yaml").exists():
+        loaded_exceptions.extend(load_exceptions(Path(rules_dir) / "exceptions.yaml"))
+    if (project_root / "rules" / "exceptions.yaml").exists():
+        loaded_exceptions.extend(load_exceptions(project_root / "rules" / "exceptions.yaml"))
+    elif (DEFAULT_RULES_DIR / "exceptions.yaml").exists():
+        loaded_exceptions.extend(load_exceptions(DEFAULT_RULES_DIR / "exceptions.yaml"))
 
     # Instantiate detectors
     regex_detector = RegexDetector(all_rules)
@@ -502,13 +599,76 @@ def run_rules(
                 continue
             seen_dedupe.add(dedupe_key)
 
-            final_severity = adjust_severity_for_rule(
-                severity=rf.severity,
-                rule_id=rf.rule_id,
-                environment=classification.environment,
-                confidence=classification.confidence,
-                is_real_secret=rf.is_real_secret,
-            )
+            base_severity = rf.severity
+            finding_msg = rf.message
+
+            env_val = (
+                classification.environment.value
+                if isinstance(classification.environment, Environment)
+                else str(classification.environment)
+            ).strip().lower()
+
+            evidence_list = classification.evidence or []
+            has_conflict = any("CONFLICT" in str(ev).upper() for ev in evidence_list)
+
+            # 1. Environment-sensitive severity
+            if has_conflict:
+                # If the classification evidence contains "CONFLICT", raise one level and add
+                # " (declared local-only but deployed to production)" to the message.
+                final_severity = _raise_severity(base_severity)
+                conflict_note = " (declared local-only but deployed to production)"
+                if conflict_note not in finding_msg:
+                    finding_msg = f"{finding_msg}{conflict_note}"
+            elif env_val == Environment.PRODUCTION.value:
+                # production: keep severity; raise one level for rules marked raise_in_production: true
+                # (never above critical)
+                if rf.raise_in_production:
+                    final_severity = _raise_severity(base_severity)
+                else:
+                    final_severity = base_severity
+            elif env_val == Environment.LOCAL_TESTING.value:
+                # local-testing: lower by at most one level, never suppress, never below low.
+                # Real secrets are never lowered
+                if rf.is_real_secret:
+                    final_severity = base_severity
+                else:
+                    final_severity = _lower_severity(base_severity)
+            else:
+                # unknown: keep original severity, and append " (environment could not be determined)"
+                # to the message.
+                final_severity = base_severity
+                unknown_note = " (environment could not be determined)"
+                if unknown_note not in finding_msg:
+                    finding_msg = f"{finding_msg}{unknown_note}"
+
+            # 2. Exceptions handling:
+            # An active exception downgrades the finding to low and adds " [exception: <reason>]" to
+            # the message; it never hides it. Expired exceptions are ignored and reported as a warning.
+            file_basename = Path(rel_key).name
+            for exc in loaded_exceptions:
+                if exc.rule_id not in ("*", rf.rule_id):
+                    continue
+                g = exc.file_glob
+                matches = (
+                    not g
+                    or g == "*"
+                    or fnmatch.fnmatch(rel_key, g)
+                    or fnmatch.fnmatch(file_basename, g)
+                    or fnmatch.fnmatch(rel_key, f"*/{g}")
+                )
+                if not matches:
+                    continue
+
+                if is_exception_active(exc):
+                    final_severity = Severity.LOW
+                    exc_note = f" [exception: {exc.reason}]"
+                    if exc_note not in finding_msg:
+                        finding_msg = f"{finding_msg}{exc_note}"
+                    break
+                else:
+                    logger.warning(
+                        f"Exception for rule '{exc.rule_id}' on '{exc.file_glob}' expired on {exc.expiry} and was ignored."
+                    )
 
             findings.append(
                 Finding(
@@ -516,7 +676,7 @@ def run_rules(
                     line=rf.line,
                     rule_id=rf.rule_id,
                     severity=final_severity,
-                    message=rf.message,
+                    message=finding_msg,
                     environment=classification.environment,
                     confidence=classification.confidence,
                     recommendation=rf.recommendation,

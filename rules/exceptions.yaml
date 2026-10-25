@@ -1,0 +1,12 @@
+# Security Scanner Exceptions
+# Format:
+# exceptions:
+#   - file_glob: "pattern"
+#     rule_id: "rule-id"
+#     reason: "justification"
+#     expiry: "YYYY-MM-DD"
+exceptions:
+  - file_glob: "tests/mock_*.py"
+    rule_id: "code-hardcoded-secret-key"
+    reason: "Mock secret key for local test suites"
+    expiry: "2099-12-31"

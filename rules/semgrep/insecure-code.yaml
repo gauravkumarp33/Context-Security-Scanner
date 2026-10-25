@@ -1,7 +1,7 @@
 rules:
   - id: code-sql-injection
     languages: [python, javascript, typescript]
-    message: "Possible SQL injection: SQL query constructed via string formatting or concatenation."
+    message: "Dynamic SQL query constructed via string formatting or concatenation exposes database contents to arbitrary SQL injection attacks."
     severity: ERROR
     patterns:
       - pattern-either:
@@ -11,7 +11,7 @@ rules:
 
   - id: code-eval-exec
     languages: [python, javascript, typescript]
-    message: "Dangerous execution of arbitrary code via eval() or exec()."
+    message: "Dynamic code execution via eval() or exec() allows untrusted input to run arbitrary commands with application privileges."
     severity: ERROR
     patterns:
       - pattern-either:
@@ -20,31 +20,31 @@ rules:
 
   - id: code-subprocess-shell
     languages: [python]
-    message: "Execution of subprocess with shell=True invites command injection vulnerabilities."
+    message: "Subprocess execution with shell=True invites command injection by executing commands through an underlying system shell."
     severity: ERROR
     pattern: subprocess.$FUNC(..., shell=True, ...)
 
   - id: code-hardcoded-secret-key
     languages: [python, javascript, typescript]
-    message: "Hardcoded SECRET_KEY detected in application source code."
+    message: "Hardcoded SECRET_KEY detected in source code compromises cryptographic session signatures and token validation."
     severity: ERROR
     pattern: SECRET_KEY = "..."
 
   - id: code-debug-mode
     languages: [python]
-    message: "Application debug mode explicitly enabled (DEBUG = True)."
+    message: "Application debug mode enabled in source code exposes internal stack traces, interactive debuggers, and sensitive server details."
     severity: WARNING
     pattern: DEBUG = True
 
   - id: code-tls-verify-disabled
     languages: [python]
-    message: "TLS certificate verification disabled via verify=False."
+    message: "Disabling TLS certificate verification via verify=False leaves network communications vulnerable to man-in-the-middle attacks."
     severity: ERROR
     pattern: requests.$METHOD(..., verify=False, ...)
 
   - id: code-weak-password-hash
     languages: [python, javascript, typescript]
-    message: "Weak cryptographic hash algorithm (MD5 or SHA1) detected."
+    message: "Using weak hash algorithms like MD5 or SHA1 for passwords allows rapid offline cracking through precomputed rainbow tables."
     severity: WARNING
     patterns:
       - pattern-either:
@@ -55,7 +55,7 @@ rules:
 
   - id: code-cors-wildcard
     languages: [python, javascript, typescript]
-    message: "Overly permissive CORS configuration allowing all origins ('*')."
+    message: "Wildcard CORS policy allows unauthorized external websites to read sensitive API responses on behalf of authenticated users."
     severity: WARNING
     patterns:
       - pattern-either:
