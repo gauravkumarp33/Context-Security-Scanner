@@ -6,11 +6,13 @@
       "type": "extensionHost",
       "request": "launch",
       "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}/vscode-extension"
+        "--extensionDevelopmentPath=${workspaceFolder}/vscode-extension",
+        "${workspaceFolder}/tests/fixtures/inappropriate_project"
       ],
       "outFiles": [
         "${workspaceFolder}/vscode-extension/out/**/*.js"
-      ]
+      ],
+      "preLaunchTask": "npm: compile (vscode-extension)"
     }
   ]
 }

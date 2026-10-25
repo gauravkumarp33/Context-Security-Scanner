@@ -1,0 +1,16 @@
+name: Vulnerable CI Workflow
+
+on:
+  # Inappropriate pull_request_target trigger with elevated access
+  pull_request_target:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Inappropriate unpinned third-party action using mutable tag
+      - uses: actions/checkout@v3
+
+      - name: Run Build
+        run: echo "Running automated pipeline"

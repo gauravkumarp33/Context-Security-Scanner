@@ -12,6 +12,9 @@
     "Programming Languages"
   ],
   "activationEvents": [
+    "onStartupFinished",
+    "onView:securityFindings",
+    "onView:securityFindingsExplorer",
     "onCommand:security-scanner.scanWorkspace",
     "onCommand:security-scanner.scanFile"
   ],

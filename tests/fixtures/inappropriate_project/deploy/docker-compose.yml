@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  database:
+    image: postgres:15
+    environment:
+      # Inappropriate hardcoded database password in compose environment
+      POSTGRES_PASSWORD: "inappropriate_plaintext_postgres_pass_999"
+    ports:
+      # Inappropriate database port exposed to all network interfaces
+      - "0.0.0.0:5432:5432"
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
