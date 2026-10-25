@@ -14,6 +14,7 @@ LOCAL_TESTING_LOWERABLE_CATEGORIES: Set[str] = {
     "insecure_config",
     "test_credentials",
     "public_access",
+    "debug_mode",
 }
 
 RULE_CATEGORY_MAP: Dict[str, str] = {

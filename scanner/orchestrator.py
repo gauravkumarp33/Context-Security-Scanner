@@ -69,6 +69,8 @@ def _get_loaded_rules(project_root: Path, rules_dir: Optional[Path] = None) -> L
 def scan_project_result(
     root: Union[str, Path],
     exclude: Optional[Union[List[str], Set[str], Tuple[str, ...], str]] = None,
+    enable_semgrep: bool = False,
+    enable_gitleaks: bool = False,
 ) -> ScanResult:
     """
     Scan a repository root path or a single file by classifying file environments and running security rules.
@@ -96,25 +98,33 @@ def scan_project_result(
     errors: List[str] = []
 
     # 1. Tool availability checks: only append if rules requiring that tool engine exist
-    loaded_rules = _get_loaded_rules(project_root)
-    has_gitleaks_rules = any(r.engine == "gitleaks" for r in loaded_rules)
-    has_semgrep_rules = any(r.engine == "semgrep" for r in loaded_rules)
-
-    if not is_gitleaks_available() and has_gitleaks_rules:
-        errors.append("Gitleaks is not installed; skipping Gitleaks engine.")
-
-    if not is_semgrep_available() and has_semgrep_rules:
-        errors.append("Semgrep is not installed; skipping Semgrep engine.")
+    if enable_gitleaks and not is_gitleaks_available():
+        errors.append("Gitleaks is not installed; install it or disable Gitleaks rules.")
+    if enable_semgrep and not is_semgrep_available():
+        errors.append("Semgrep is not installed; install it or disable Semgrep rules.")
 
     # 2. Run rules wrapped against unexpected exceptions
     findings: List[Finding] = []
     status = "success"
 
     try:
-        findings = run_rules(project_root=project_root, files=files, classifications=classifications)
+        if not errors:
+            findings = run_rules(
+                project_root=project_root,
+                files=files,
+                classifications=classifications,
+                enable_semgrep=enable_semgrep,
+                enable_gitleaks=enable_gitleaks,
+            )
+        else:
+            status = "failure"
     except Exception as e:
         status = "failure"
-        errors.append("An unexpected error occurred during rule execution.")
+        from scanner.rules import DetectorExecutionError, RuleValidationError
+        if isinstance(e, (DetectorExecutionError, RuleValidationError)):
+            errors.append(str(e))
+        else:
+            errors.append("An unexpected error occurred during rule execution.")
         logger.warning(f"Unexpected error in run_rules: {type(e).__name__}")
 
     return ScanResult(status=status, findings=findings, errors=errors)

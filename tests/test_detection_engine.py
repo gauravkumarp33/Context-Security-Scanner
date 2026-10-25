@@ -539,6 +539,8 @@ def test_semgrep_unmapped_rule_does_not_leak_secret(tmp_path):
     mock_semgrep_results = [
         {
             "check_id": "unmapped-custom-semgrep-rule",
+                "path": str(target_file),
+                "path": str(target_file),
             "start": {"line": 1},
             "extra": {
                 "message": f"Hardcoded secret leaked in extra.message: {fake_secret}",
@@ -737,5 +739,26 @@ def test_safe_int_line_float_inf_does_not_raise(tmp_path):
 
     assert len(sg_findings) == 1
     assert sg_findings[0].line == 1
+
+
+def test_semgrep_runs_once_for_multiple_files_and_maps_findings(tmp_path):
+    first = tmp_path / "one.py"
+    second = tmp_path / "two.py"
+    first.write_text("eval(source)\n", encoding="utf-8")
+    second.write_text("eval(other)\n", encoding="utf-8")
+    results = [
+        {"check_id": "code-eval-exec", "path": str(first), "start": {"line": 1}},
+        {"check_id": "code-eval-exec", "path": str(second), "start": {"line": 1}},
+    ]
+    with patch("scanner.rules.is_semgrep_available", return_value=True), \
+         patch("scanner.rules.run_semgrep", return_value=results) as runner:
+        findings = run_rules(tmp_path, [first, second], enable_semgrep=True)
+    assert runner.call_count == 1
+    assert [(finding.file, finding.rule_id) for finding in findings if finding.rule_id == "code-eval-exec"] == [
+        ("one.py", "code-eval-exec"),
+        ("two.py", "code-eval-exec"),
+    ]
+    assert all("Dynamic code execution" in finding.message for finding in findings if finding.rule_id == "code-eval-exec")
+    assert all("Dynamic code execution" in finding.message for finding in findings if finding.rule_id == "code-eval-exec")
 
 

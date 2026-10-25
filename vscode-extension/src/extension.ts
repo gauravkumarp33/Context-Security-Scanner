@@ -182,7 +182,7 @@ export function getRepoRoot(customScannerRoot?: string, workspaceFolder?: vscode
 /**
  * Spawns the Python security scanner CLI with:
  * 1. cwd set to repository root containing 'scanner'
- * 2. full command, stdout, stderr, and exit code logged to OutputChannel before parsing
+ * 2. command and exit code logged without retaining raw findings in the OutputChannel
  * 3. target scan path set to absolute path of workspace folder
  */
 export function spawnCliScan(
@@ -248,11 +248,24 @@ export function spawnCliScan(
       });
 
       child.on('close', (code: number | null) => {
-        // 2. Explicitly write command, cwd, exit code, stdout, and stderr BEFORE parsing
+        // Log stream sizes only; raw output could contain user data.
         outputChannel.appendLine(`[Security Scanner] Exit Code: ${code}`);
-        outputChannel.appendLine(`[Security Scanner] STDOUT:\n${stdout.length > 0 ? stdout : '<empty>'}`);
-        outputChannel.appendLine(`[Security Scanner] STDERR:\n${stderr.length > 0 ? stderr : '<empty>'}`);
+        outputChannel.appendLine(`[Security Scanner] Received ${stdout.length} stdout and ${stderr.length} stderr characters.`);
         outputChannel.appendLine(`============================================================\n`);
+
+        if (code === 2) {
+          const diagnostic = 'Scanner reported an incomplete scan (exit code 2). Run the same target from the CLI to view diagnostics.';
+          outputChannel.appendLine(`[ERROR] ${diagnostic}`);
+          reject(new Error(diagnostic));
+          return;
+        }
+
+        if (code === 2) {
+          const diagnostic = stderr.trim() || 'Scanner reported an incomplete scan.';
+          outputChannel.appendLine(`[ERROR] ${diagnostic}`);
+          reject(new Error(diagnostic));
+          return;
+        }
 
         // Parse stdout only; non-zero exit code is not failure if stdout has valid JSON
         try {
@@ -262,8 +275,7 @@ export function spawnCliScan(
           );
           resolve(scanResult);
         } catch (parseErr) {
-          const previewStdout = stdout.trim().slice(0, 200);
-          const errMsg = `Scanner CLI failed (exit code ${code}).\nstderr: ${stderr.trim() || '<empty>'}\nstdout (first 200 chars): ${previewStdout || '<empty>'}`;
+          const errMsg = `Scanner CLI output was not valid JSON (exit code ${code}).`;
           outputChannel.appendLine(`[ERROR] ${errMsg}`);
           reject(new Error(errMsg));
         }

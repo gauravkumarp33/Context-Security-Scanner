@@ -197,9 +197,13 @@ export class CliFindingsProvider implements FindingsProvider {
         child.on('close', (code: number | null) => {
           if (this.outputChannel) {
             this.outputChannel.appendLine(`[Security Scanner] Exit Code: ${code}`);
-            this.outputChannel.appendLine(`[Security Scanner] STDOUT:\n${stdout.length > 0 ? stdout : '<empty>'}`);
-            this.outputChannel.appendLine(`[Security Scanner] STDERR:\n${stderr.length > 0 ? stderr : '<empty>'}`);
+            this.outputChannel.appendLine(`[Security Scanner] Received ${stdout.length} stdout and ${stderr.length} stderr characters.`);
             this.outputChannel.appendLine(`============================================================\n`);
+          }
+
+          if (code === 2) {
+            reject(new Error('Scanner reported an incomplete scan (exit code 2). Run the same target from the CLI to view diagnostics.'));
+            return;
           }
 
           // Parse stdout only; don't treat a non-zero exit as failure when stdout has valid JSON.
@@ -210,8 +214,7 @@ export class CliFindingsProvider implements FindingsProvider {
             }
             resolve(scanResult);
           } catch (parseErr) {
-            const previewStdout = stdout.trim().slice(0, 200);
-            const errMsg = `Scanner failed with exit code ${code}.\nstderr: ${stderr.trim() || '<empty>'}\nstdout (first 200 chars): ${previewStdout || '<empty>'}`;
+            const errMsg = `Scanner CLI output was not valid JSON (exit code ${code}).`;
             if (this.outputChannel) {
               this.outputChannel.appendLine(`[ERROR] ${errMsg}`);
             }

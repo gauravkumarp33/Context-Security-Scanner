@@ -75,15 +75,13 @@ def test_missing_tools_with_no_tool_rules_gives_empty_errors(sample_project, mon
 
 
 def test_injected_tool_rules_populate_errors_when_tools_missing(sample_project, fake_tool_rules, monkeypatch):
-    """
-    When rules for gitleaks and semgrep are loaded, monkeypatching tool availability
-    to False populates errors while leaving findings unchanged.
-    """
+    """Enabled optional detectors must fail the scan when their binaries are absent."""
     # 1. Base run where both tools are available: errors is empty
     with patch("scanner.orchestrator._get_loaded_rules", return_value=fake_tool_rules), \
          patch("scanner.orchestrator.is_gitleaks_available", return_value=True), \
-         patch("scanner.orchestrator.is_semgrep_available", return_value=True):
-        baseline_result = scan_project_result(sample_project)
+         patch("scanner.orchestrator.is_semgrep_available", return_value=True), \
+         patch("scanner.orchestrator.run_rules", return_value=[]):
+        baseline_result = scan_project_result(sample_project, enable_semgrep=True, enable_gitleaks=True)
 
     assert baseline_result.status == "success"
     assert baseline_result.errors == []
@@ -93,9 +91,9 @@ def test_injected_tool_rules_populate_errors_when_tools_missing(sample_project, 
     with patch("scanner.orchestrator._get_loaded_rules", return_value=fake_tool_rules), \
          patch("scanner.orchestrator.is_gitleaks_available", return_value=False), \
          patch("scanner.orchestrator.is_semgrep_available", return_value=True):
-        gl_missing_result = scan_project_result(sample_project)
+        gl_missing_result = scan_project_result(sample_project, enable_semgrep=True, enable_gitleaks=True)
 
-    assert gl_missing_result.status == "success"
+    assert gl_missing_result.status == "failure"
     assert len(gl_missing_result.errors) == 1
     assert "Gitleaks is not installed" in gl_missing_result.errors[0]
     assert [f.to_dict() for f in gl_missing_result.findings] == baseline_findings
@@ -104,9 +102,9 @@ def test_injected_tool_rules_populate_errors_when_tools_missing(sample_project, 
     with patch("scanner.orchestrator._get_loaded_rules", return_value=fake_tool_rules), \
          patch("scanner.orchestrator.is_gitleaks_available", return_value=True), \
          patch("scanner.orchestrator.is_semgrep_available", return_value=False):
-        sg_missing_result = scan_project_result(sample_project)
+        sg_missing_result = scan_project_result(sample_project, enable_semgrep=True, enable_gitleaks=True)
 
-    assert sg_missing_result.status == "success"
+    assert sg_missing_result.status == "failure"
     assert len(sg_missing_result.errors) == 1
     assert "Semgrep is not installed" in sg_missing_result.errors[0]
     assert [f.to_dict() for f in sg_missing_result.findings] == baseline_findings
@@ -116,9 +114,9 @@ def test_injected_tool_rules_populate_errors_when_tools_missing(sample_project, 
     with patch("scanner.orchestrator._get_loaded_rules", return_value=fake_tool_rules), \
          patch("scanner.orchestrator.is_gitleaks_available", return_value=False), \
          patch("scanner.orchestrator.is_semgrep_available", return_value=False):
-        both_missing_result = scan_project_result(sample_project)
+        both_missing_result = scan_project_result(sample_project, enable_semgrep=True, enable_gitleaks=True)
 
-    assert both_missing_result.status == "success"
+    assert both_missing_result.status == "failure"
     assert len(both_missing_result.errors) == 2
     assert any("Gitleaks is not installed" in e for e in both_missing_result.errors)
     assert any("Semgrep is not installed" in e for e in both_missing_result.errors)

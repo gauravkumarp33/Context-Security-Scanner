@@ -122,6 +122,7 @@ class Finding:
     environment: Union[Environment, str]
     confidence: float
     recommendation: str
+    evidence: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         # Validate and normalize severity
@@ -175,9 +176,15 @@ class Finding:
             raise ValueError("message must be a string")
         if not isinstance(self.recommendation, str):
             raise ValueError("recommendation must be a string")
+        evidence = self.evidence
+        if isinstance(evidence, str):
+            evidence = [evidence]
+        elif not isinstance(evidence, (list, tuple)):
+            raise ValueError("evidence must be a list of strings")
+        object.__setattr__(self, "evidence", [str(item) for item in evidence])
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "file": self.file,
             "line": self.line,
             "rule_id": self.rule_id,
@@ -187,6 +194,9 @@ class Finding:
             "confidence": self.confidence,
             "recommendation": self.recommendation,
         }
+        if self.evidence:
+            result["evidence"] = list(self.evidence)
+        return result
 
 
 @dataclass

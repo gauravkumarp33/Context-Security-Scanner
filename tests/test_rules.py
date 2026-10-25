@@ -9,7 +9,7 @@ from scanner.models import (
     Finding,
     Severity,
 )
-from scanner.rules import run_rules
+from scanner.rules import RuleValidationError, load_all_rules, run_rules
 
 
 @pytest.fixture
@@ -50,6 +50,31 @@ def test_valid_finding_passes():
         "confidence": 0.9,
         "recommendation": "Use TLS encryption",
     }
+
+
+def test_recursive_rule_loading_is_deterministic_and_rejects_duplicate_ids(tmp_path):
+    rules = tmp_path / "rules"
+    nested = rules / "nested"
+    nested.mkdir(parents=True)
+    valid = '''rules:\n  - id: nested-rule\n    title: Nested\n    severity: low\n    message: Nested rule found.\n    recommendation: Review it.\n    engine: regex\n    pattern: BAD\n    file_globs: ["*"]\n'''
+    (nested / "z.yaml").write_text(valid, encoding="utf-8")
+    assert [rule.id for rule in load_all_rules(rules)] == ["nested-rule"]
+    (rules / "a.yml").write_text(valid.replace("nested-rule", "other-rule"), encoding="utf-8")
+    assert [rule.id for rule in load_all_rules(rules)] == ["other-rule", "nested-rule"]
+    (nested / "duplicate.yml").write_text(valid, encoding="utf-8")
+    with pytest.raises(RuleValidationError, match=r"Duplicate rule ID in .+\.yaml"):
+        load_all_rules(rules)
+
+
+def test_invalid_rule_yaml_reports_path_without_echoing_source(tmp_path):
+    rules = tmp_path / "rules"
+    rules.mkdir()
+    secret = "ghp_super_private_value"
+    (rules / "broken.yaml").write_text(f"rules: [\"{secret}\"\n", encoding="utf-8")
+    with pytest.raises(RuleValidationError) as err:
+        load_all_rules(rules)
+    assert "broken.yaml" in str(err.value)
+    assert secret not in str(err.value)
 
 
 def test_valid_finding_with_string_enums_passes():

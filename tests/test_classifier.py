@@ -173,3 +173,57 @@ def test_single_file_classification_matches_full_project_result(tmp_path):
     assert single_test.environment == full_res["tests/test_api.py"].environment
     assert single_test.confidence == full_res["tests/test_api.py"].confidence
     assert single_test.evidence == full_res["tests/test_api.py"].evidence
+
+
+def test_compose_services_classify_referenced_files_and_keep_evidence(tmp_path):
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "Dockerfile.prod").write_text("FROM python:3.12\n", encoding="utf-8")
+    (tmp_path / "prod.env").write_text("MODE=prod\n", encoding="utf-8")
+    (tmp_path / "docker-compose.prod.yml").write_text(
+        "services:\n  api:\n    build:\n      context: ./app\n      dockerfile: Dockerfile.prod\n    env_file: prod.env\n    volumes:\n      - ./app:/srv/app\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests" / "mock").mkdir(parents=True)
+    (tmp_path / "tests" / "mock" / "Dockerfile").write_text("FROM alpine\n", encoding="utf-8")
+    (tmp_path / "docker-compose.test.yml").write_text(
+        "services:\n  test:\n    build: ./tests/mock\n    env_file: tests/test.env\n    volumes:\n      - ./tests/fixtures:/fixtures\n",
+        encoding="utf-8",
+    )
+
+    ctx = load_project_context(tmp_path)
+    prod, prod_evidence = ctx.is_deployed("app/Dockerfile.prod")
+    local, local_evidence = ctx.is_configured_local_only("tests/mock")
+    assert prod and any("Dockerfile referenced by production service" in e for e in prod_evidence)
+    assert ctx.is_deployed("app/Dockerfile.prod")[0]
+    assert ctx.is_deployed("app/source.py")[0]
+    assert ctx.is_deployed("prod.env")[0]
+    assert ctx.is_deployed("app")[0]
+    assert local and any("Build path referenced by local/test service" in e for e in local_evidence)
+    assert ctx.is_configured_local_only("tests/mock/Dockerfile")[0]
+    assert ctx.is_configured_local_only("tests/test.env")[0]
+    assert ctx.is_configured_local_only("tests/fixtures")[0]
+
+
+def test_github_branch_trigger_alone_is_not_deployment_evidence(tmp_path):
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    (workflow_dir / "ci.yml").write_text(
+        "name: CI\non:\n  push:\n    branches: [main]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pytest\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Dockerfile").write_text("FROM alpine\n", encoding="utf-8")
+    ctx = load_project_context(tmp_path)
+    assert ctx.is_deployed("Dockerfile")[0] is False
+
+
+def test_github_deployment_job_links_existing_deployment_files(tmp_path):
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    (tmp_path / "firestore.rules").write_text("rules_version = '2';\n", encoding="utf-8")
+    (workflow_dir / "deploy.yml").write_text(
+        "name: Deploy\non:\n  push:\n    branches: [main]\njobs:\n  deploy:\n    environment: production\n    steps:\n      - run: firebase deploy --only firestore:rules\n      - run: echo firestore.rules\n",
+        encoding="utf-8",
+    )
+    deployed, evidence = load_project_context(tmp_path).is_deployed("firestore.rules")
+    assert deployed
+    assert any("deployment job" in item for item in evidence)

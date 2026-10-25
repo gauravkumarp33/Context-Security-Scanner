@@ -18,11 +18,11 @@ def run_gitleaks(
 ) -> List[Dict[str, Any]]:
     """
     Run Gitleaks on the specified target path and return raw finding objects.
-    If Gitleaks is not installed, logs a warning and returns an empty list without crashing.
+    Raises a sanitized RuntimeError when execution fails; callers must not report a
+    partial external-tool scan as clean.
     """
     if not is_gitleaks_available():
-        logger.warning("Gitleaks binary not found in PATH; skipping Gitleaks detector.")
-        return []
+        raise RuntimeError("Gitleaks is not installed.")
 
     target = Path(target_path).resolve()
     cmd = [
@@ -38,17 +38,22 @@ def run_gitleaks(
         cmd.extend(["--config", str(config_path)])
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        output = proc.stdout.strip()
-        if output:
-            try:
-                parsed = json.loads(output)
-                if isinstance(parsed, list):
-                    return parsed
-            except json.JSONDecodeError:
-                logger.warning("Failed to parse Gitleaks JSON output.")
-                return []
-        return []
-    except Exception as e:
-        logger.warning(f"Error executing Gitleaks: {e}")
-        return []
+        cwd = target if target.is_dir() else target.parent
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=cwd)
+        if proc.returncode == 1 and not proc.stdout.strip():
+            raise RuntimeError("Gitleaks reported findings without a JSON report; scan is incomplete.")
+        if proc.returncode == 0 and not proc.stdout.strip():
+            raise RuntimeError("Gitleaks returned no JSON output; scan is incomplete.")
+        try:
+            parsed = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            raise RuntimeError("Gitleaks returned invalid JSON; scan is incomplete.") from None
+        if proc.returncode not in (0, 1):
+            raise RuntimeError("Gitleaks exited with an error; scan is incomplete.")
+        if not isinstance(parsed, list):
+            raise RuntimeError("Gitleaks returned an unexpected result shape; scan is incomplete.")
+        return parsed
+    except RuntimeError:
+        raise
+    except Exception:
+        raise RuntimeError("Gitleaks could not be executed; scan is incomplete.") from None

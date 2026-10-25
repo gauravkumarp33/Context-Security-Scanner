@@ -18,11 +18,11 @@ def run_semgrep(
 ) -> List[Dict[str, Any]]:
     """
     Run Semgrep on the specified target path and return raw result dictionaries.
-    If Semgrep is not installed, logs a warning and returns an empty list without crashing.
+    Raises a sanitized RuntimeError when execution fails; callers must not report a
+    partial external-tool scan as clean.
     """
     if not is_semgrep_available():
-        logger.warning("Semgrep binary not found in PATH; skipping Semgrep detector.")
-        return []
+        raise RuntimeError("Semgrep is not installed.")
 
     target = Path(target_path).resolve()
     cmd = ["semgrep", "scan", "--json"]
@@ -31,19 +31,21 @@ def run_semgrep(
     cmd.append(str(target))
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        output = proc.stdout.strip()
-        if output:
-            try:
-                parsed = json.loads(output)
-                if isinstance(parsed, dict):
-                    return parsed.get("results", [])
-                elif isinstance(parsed, list):
-                    return parsed
-            except json.JSONDecodeError:
-                logger.warning("Failed to parse Semgrep JSON output.")
-                return []
-        return []
-    except Exception as e:
-        logger.warning(f"Error executing Semgrep: {e}")
-        return []
+        cwd = target if target.is_dir() else target.parent
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=cwd)
+        if not proc.stdout.strip():
+            raise RuntimeError("Semgrep returned no JSON output; scan is incomplete.")
+        try:
+            parsed = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            raise RuntimeError("Semgrep returned invalid JSON; scan is incomplete.") from None
+        if proc.returncode != 0:
+            raise RuntimeError("Semgrep exited with an error; scan is incomplete.")
+        results = parsed.get("results", []) if isinstance(parsed, dict) else parsed
+        if not isinstance(results, list):
+            raise RuntimeError("Semgrep returned an unexpected result shape; scan is incomplete.")
+        return results
+    except RuntimeError:
+        raise
+    except Exception:
+        raise RuntimeError("Semgrep could not be executed; scan is incomplete.") from None

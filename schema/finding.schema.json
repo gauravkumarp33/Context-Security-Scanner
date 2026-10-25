@@ -56,6 +56,11 @@
         "type": "string",
         "minLength": 1,
         "description": "Actionable guidance to remediate the finding"
+      },
+      "evidence": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Signals used to classify the finding's environment"
       }
     },
     "additionalProperties": false

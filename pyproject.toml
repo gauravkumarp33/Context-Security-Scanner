@@ -1,9 +1,15 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "context-security-scanner"
 version = "0.1.0"
 dependencies = [
     "pyyaml>=6.0",
 ]
+readme = "README.md"
+requires-python = ">=3.9"
 
 [project.optional-dependencies]
 dev = [
@@ -17,6 +23,20 @@ code-security-scanner = "scanner.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["scanner*"]
+
+[tool.setuptools.data-files]
+"share/context-security-scanner/rules" = [
+    "rules/exceptions.yaml",
+    "rules/gitleaks.toml",
+    "rules/insecure-code.yaml",
+    "rules/insecure-config.yaml",
+    "rules/secrets.yaml",
+]
+"share/context-security-scanner/rules/semgrep" = [
+    "rules/semgrep/insecure-code.yaml",
+    "rules/semgrep/insecure-config.yaml",
+]
+"share/context-security-scanner/schema" = ["schema/finding.schema.json"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

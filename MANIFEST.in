@@ -1,0 +1,3 @@
+include README.md
+recursive-include rules *.yaml *.toml
+recursive-include schema *.json

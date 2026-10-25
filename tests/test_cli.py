@@ -113,3 +113,27 @@ def test_cli_single_file_scan(tmp_path, capsys):
     assert len(findings) == 1
     assert Path(findings[0]["file"]).as_posix().endswith("firestore.rules")
 
+
+def test_enabled_missing_detector_returns_two_and_keeps_json_parseable(tmp_path, capsys, monkeypatch):
+    (tmp_path / "app.py").write_text("DEBUG = True\n", encoding="utf-8")
+    monkeypatch.setattr("scanner.orchestrator.is_semgrep_available", lambda: False)
+    exit_code = main(["scan", str(tmp_path), "--enable-semgrep"])
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert json.loads(captured.out) == []
+    assert "Semgrep is not installed" in captured.err
+
+
+def test_detector_failure_is_sanitized_and_returns_two(tmp_path, capsys, monkeypatch):
+    secret = "ghp_this_must_never_appear"
+    (tmp_path / "app.py").write_text("DEBUG = True\n", encoding="utf-8")
+    monkeypatch.setattr("scanner.orchestrator.is_semgrep_available", lambda: True)
+    monkeypatch.setattr("scanner.rules.is_semgrep_available", lambda: True)
+    monkeypatch.setattr("scanner.rules.run_semgrep", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError(secret)))
+    code = main(["scan", str(tmp_path), "--enable-semgrep"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert json.loads(captured.out) == []
+    assert secret not in captured.out + captured.err
+    assert "scan is incomplete" in captured.err
+

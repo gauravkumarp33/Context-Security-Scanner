@@ -3,7 +3,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from scanner.orchestrator import scan_project
+from scanner.orchestrator import scan_project_result
 
 SEVERITY_WEIGHTS = {
     "low": 1,
@@ -28,6 +28,8 @@ def create_parser() -> argparse.ArgumentParser:
         default="json",
         help="Output format: 'json' (default, schema-compliant) or 'human' (readable terminal report)",
     )
+    scan_parser.add_argument("--enable-semgrep", action="store_true", help="Run bundled Semgrep rules (requires Semgrep).")
+    scan_parser.add_argument("--enable-gitleaks", action="store_true", help="Run bundled Gitleaks rules/configuration (requires Gitleaks).")
     scan_parser.add_argument(
         "--fail-on",
         choices=["low", "medium", "high", "critical"],
@@ -73,6 +75,8 @@ def format_human_report(target_path: Path, findings: List[Dict[str, Any]]) -> st
         lines.append(f"    Environment    : {env} (confidence: {conf:.2f})")
         lines.append(f"    Message        : {f.get('message')}")
         lines.append(f"    Recommendation : {f.get('recommendation')}")
+        if f.get("evidence"):
+            lines.append(f"    Evidence       : {'; '.join(f['evidence'])}")
         lines.append("-" * 64)
 
     return "\n".join(lines)
@@ -104,11 +108,19 @@ def main(args: Optional[List[str]] = None) -> int:
             return 2
 
         try:
-            findings_objs = scan_project(target_path, exclude=parsed_args.exclude)
-            findings_dicts = [f.to_dict() for f in findings_objs]
-        except Exception as e:
-            sys.stderr.write(f"Scanner Execution Error: {e}\n")
+            result = scan_project_result(
+                target_path,
+                exclude=parsed_args.exclude,
+                enable_semgrep=parsed_args.enable_semgrep,
+                enable_gitleaks=parsed_args.enable_gitleaks,
+            )
+            findings_dicts = [f.to_dict() for f in result.findings]
+        except Exception:
+            sys.stderr.write("Scanner execution failed; scan is incomplete.\n")
             return 2
+
+        for diagnostic in result.errors:
+            sys.stderr.write(f"Scanner: {diagnostic}\n")
 
         # Format output
         if parsed_args.format == "human":
@@ -129,6 +141,8 @@ def main(args: Optional[List[str]] = None) -> int:
             print(output_content)
 
         # Check exit code against failure threshold
+        if result.status != "success" or result.errors:
+            return 2
         if should_fail(findings_dicts, parsed_args.fail_on):
             return 1
 

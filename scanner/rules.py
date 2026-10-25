@@ -2,6 +2,7 @@ import datetime
 import fnmatch
 import logging
 import re
+import sysconfig
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
@@ -14,7 +15,6 @@ from scanner.integrations.semgrep_runner import is_semgrep_available, run_semgre
 from scanner.models import EnvClassification, Environment, Finding, Severity
 from scanner.severity import (
     SEVERITY_ORDER,
-    _lower_severity,
     _raise_severity,
     adjust_severity,
     adjust_severity_for_rule,
@@ -29,7 +29,19 @@ FIREBASE_OPEN_ACCESS_PATTERN = re.compile(
 )
 FIREBASE_OPEN_ACCESS_BASE_SEVERITY = Severity.HIGH
 
-DEFAULT_RULES_DIR = Path(__file__).resolve().parent.parent / "rules"
+def _default_resource_dir(name: str) -> Path:
+    """Resolve resources in a checkout first, then in a wheel installation."""
+    checkout = Path(__file__).resolve().parent.parent / name
+    if checkout.exists():
+        return checkout
+    installed = Path(sysconfig.get_path("data")) / "share" / "context-security-scanner" / name
+    return installed
+
+
+DEFAULT_RULES_DIR = _default_resource_dir("rules")
+DEFAULT_SCHEMA_DIR = _default_resource_dir("schema")
+DEFAULT_GITLEAKS_CONFIG = DEFAULT_RULES_DIR / "gitleaks.toml"
+DEFAULT_SEMGREP_RULES_DIR = DEFAULT_RULES_DIR / "semgrep"
 
 PLACEHOLDER_SUBSTRINGS: Set[str] = {
     "changeme",
@@ -61,6 +73,10 @@ def is_placeholder(val: str) -> bool:
 class RuleValidationError(ValueError):
     """Raised when a rule definition fails schema or semantic validation."""
     pass
+
+
+class DetectorExecutionError(RuntimeError):
+    """An enabled external detector could not complete a trustworthy scan."""
 
 
 @dataclass
@@ -131,7 +147,7 @@ def load_exceptions(yaml_path: Path) -> List[RuleException]:
                 )
             )
     except Exception as e:
-        logger.warning(f"Failed to load exceptions from {yaml_path}: {e}")
+        logger.warning("Failed to parse exception configuration at %s.", yaml_path)
     return exceptions
 
 
@@ -142,8 +158,8 @@ def is_exception_active(exc: RuleException) -> bool:
     try:
         expiry_date = datetime.date.fromisoformat(str(exc.expiry).strip())
         return datetime.date.today() <= expiry_date
-    except Exception as e:
-        logger.warning(f"Invalid expiry date '{exc.expiry}' in exception: {e}")
+    except Exception:
+        logger.warning("Invalid expiry date in exception configuration; exception ignored.")
         return False
 
 
@@ -164,7 +180,9 @@ class RegexDetector(Detector):
             try:
                 self._compiled_patterns[r.id] = re.compile(r.pattern, re.MULTILINE)
             except re.error as e:
-                logger.warning(f"Failed to compile regex for rule '{r.id}': {e}")
+                raise RuleValidationError(
+                    f"Invalid regex in rule '{r.id}' at position {getattr(e, 'pos', 'unknown')}."
+                ) from None
 
     def detect(self, file_path: Path, content: str) -> List[RawFinding]:
         findings: List[RawFinding] = []
@@ -242,19 +260,22 @@ def _safe_int_line(val: Any, default: int = 1) -> int:
 class GitleaksDetector(Detector):
     """Detector wrapping the Gitleaks runner."""
 
-    def __init__(self, rules: List[RuleDefinition], config_path: Optional[Path] = None):
-        self.rules = {r.id: r for r in rules if r.engine == "gitleaks"}
-        self.config_path = config_path
+    def __init__(self, rules: List[RuleDefinition], config_path: Optional[Path] = None, scan_root: Optional[Path] = None):
+        self.rules = {r.id: r for r in rules if r.engine == "gitleaks" or r.id.startswith("secret-")}
+        self.config_path = config_path or DEFAULT_GITLEAKS_CONFIG
+        self.scan_root = scan_root
+        self._results: Optional[List[dict]] = None
 
     def detect(self, file_path: Path, content: str) -> List[RawFinding]:
         if not self.rules:
             return []
         if not is_gitleaks_available():
-            logger.warning("Gitleaks is not installed; skipping Gitleaks engine.")
-            return []
+            raise DetectorExecutionError("Gitleaks is not installed; install it or disable Gitleaks rules.")
 
         findings: List[RawFinding] = []
-        raw_results = run_gitleaks(file_path, config_path=self.config_path)
+        if self._results is None:
+            self._results = run_gitleaks(self.scan_root or file_path, config_path=self.config_path)
+        raw_results = [res for res in self._results if isinstance(res, dict) and _result_matches_file(res, file_path, self.scan_root or file_path)]
         for res in raw_results:
             if not isinstance(res, dict):
                 continue
@@ -289,19 +310,22 @@ class GitleaksDetector(Detector):
 class SemgrepDetector(Detector):
     """Detector wrapping the Semgrep runner."""
 
-    def __init__(self, rules: List[RuleDefinition], config_path: Optional[Path] = None):
+    def __init__(self, rules: List[RuleDefinition], config_path: Optional[Path] = None, scan_root: Optional[Path] = None):
         self.rules = {r.id: r for r in rules if r.engine == "semgrep"}
-        self.config_path = config_path
+        self.config_path = config_path or DEFAULT_SEMGREP_RULES_DIR
+        self.scan_root = scan_root
+        self._results: Optional[List[dict]] = None
 
     def detect(self, file_path: Path, content: str) -> List[RawFinding]:
-        if not self.rules:
+        if not self.config_path or not Path(self.config_path).exists():
             return []
         if not is_semgrep_available():
-            logger.warning("Semgrep is not installed; skipping Semgrep engine.")
-            return []
+            raise DetectorExecutionError("Semgrep is not installed; install it or disable Semgrep rules.")
 
         findings: List[RawFinding] = []
-        raw_results = run_semgrep(file_path, config_path=self.config_path)
+        if self._results is None:
+            self._results = run_semgrep(self.scan_root or file_path, config_path=self.config_path)
+        raw_results = [res for res in self._results if isinstance(res, dict) and _result_matches_file(res, file_path, self.scan_root or file_path)]
         for res in raw_results:
             if not isinstance(res, dict):
                 continue
@@ -335,6 +359,19 @@ class SemgrepDetector(Detector):
         return findings
 
 
+def _result_matches_file(result: dict, file_path: Path, scan_root: Path) -> bool:
+    raw_path = result.get("path") or result.get("File")
+    if not isinstance(raw_path, str):
+        return True
+    candidate = Path(raw_path)
+    if not candidate.is_absolute():
+        candidate = Path(scan_root).resolve() / candidate
+    try:
+        return candidate.resolve() == Path(file_path).resolve()
+    except OSError:
+        return candidate == Path(file_path)
+
+
 def load_rules_from_yaml(yaml_path: Path) -> List[RuleDefinition]:
     """
     Load and validate rule definitions from a YAML file.
@@ -346,8 +383,12 @@ def load_rules_from_yaml(yaml_path: Path) -> List[RuleDefinition]:
 
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except Exception as e:
-        raise RuleValidationError(f"Failed to parse YAML file {yaml_path}: {e}")
+    except yaml.YAMLError as e:
+        mark = getattr(e, "problem_mark", None)
+        location = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
+        raise RuleValidationError(f"Failed to parse YAML rule file {path}{location}.") from None
+    except OSError:
+        raise RuleValidationError(f"Could not read YAML rule file {path}.") from None
 
     if data is None:
         return []
@@ -376,20 +417,24 @@ def load_rules_from_yaml(yaml_path: Path) -> List[RuleDefinition]:
                     f"Rule at index {idx} in {yaml_path} missing required field '{req}'."
                 )
 
+        rule_id = str(item["id"]).strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", rule_id):
+            raise RuleValidationError(f"Invalid rule ID at index {idx} in {path}; use letters, digits, dots, underscores, and hyphens.")
+
         # Validate severity
         raw_sev = str(item["severity"]).strip().lower()
         try:
             severity = Severity(raw_sev)
         except ValueError:
             raise RuleValidationError(
-                f"Invalid severity '{item['severity']}' in rule '{item['id']}'. Must be low, medium, high, or critical."
+                f"Invalid severity in rule at index {idx} in {path}; expected low, medium, high, or critical."
             )
 
         # Validate engine
         raw_engine = str(item["engine"]).strip().lower()
         if raw_engine not in {"regex", "semgrep", "gitleaks"}:
             raise RuleValidationError(
-                f"Invalid engine '{item['engine']}' in rule '{item['id']}'. Must be regex, semgrep, or gitleaks."
+                f"Invalid engine in rule at index {idx} in {path}; expected regex, semgrep, or gitleaks."
             )
 
         # Validate file_globs
@@ -409,7 +454,7 @@ def load_rules_from_yaml(yaml_path: Path) -> List[RuleDefinition]:
 
         rules.append(
             RuleDefinition(
-                id=str(item["id"]).strip(),
+                id=rule_id,
                 title=str(item["title"]).strip(),
                 severity=severity,
                 message=str(item["message"]).strip(),
@@ -436,17 +481,60 @@ def load_all_rules(rules_dir: Path) -> List[RuleDefinition]:
     if not rules_path.exists() or not rules_path.is_dir():
         return all_rules
 
-    yaml_files = sorted(list(rules_path.glob("*.yaml")) + list(rules_path.glob("*.yml")))
+    yaml_files = sorted(
+        (path for path in rules_path.rglob("*") if path.is_file() and path.suffix.lower() in {".yaml", ".yml"}),
+        key=lambda path: path.relative_to(rules_path).as_posix(),
+    )
     for yf in yaml_files:
-        if yf.name == "exceptions.yaml":
+        if yf.name == "exceptions.yaml" or "semgrep" in yf.relative_to(rules_path).parts:
             continue
-        try:
-            rules = load_rules_from_yaml(yf)
-            all_rules.extend(rules)
-        except RuleValidationError as e:
-            logger.warning(f"Skipping invalid rule file {yf}: {e}")
+        rules = load_rules_from_yaml(yf)
+        for index, rule in enumerate(rules):
+            if any(existing.id == rule.id for existing in all_rules):
+                raise RuleValidationError(f"Duplicate rule ID in {yf} at rule index {index}; rule IDs must be unique.")
+            all_rules.append(rule)
 
     return all_rules
+
+
+def load_semgrep_rules(semgrep_dir: Path) -> List[RuleDefinition]:
+    """Load IDs and safe metadata from native Semgrep rule YAML files."""
+    result: List[RuleDefinition] = []
+    seen_ids: Set[str] = set()
+    directory = Path(semgrep_dir)
+    if not directory.is_dir():
+        return result
+    for path in sorted((p for p in directory.rglob("*") if p.is_file() and p.suffix.lower() in {".yaml", ".yml"}), key=lambda p: p.as_posix()):
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            raise RuleValidationError(f"Could not parse Semgrep rule file {path}.") from None
+        items = data.get("rules", []) if isinstance(data, dict) else []
+        if not isinstance(items, list):
+            raise RuleValidationError(f"Semgrep rule file {path} must contain a rules list.")
+        for index, item in enumerate(items):
+            if not isinstance(item, dict) or not item.get("id"):
+                raise RuleValidationError(f"Semgrep rule in {path} is missing its ID.")
+            rule_id = str(item["id"])
+            if rule_id in seen_ids:
+                raise RuleValidationError(f"Duplicate Semgrep rule ID in {path} at rule index {index}.")
+            seen_ids.add(rule_id)
+            severity_text = str(item.get("severity", "WARNING")).upper()
+            severity = {"ERROR": Severity.HIGH, "WARNING": Severity.MEDIUM, "INFO": Severity.LOW}.get(severity_text)
+            if not severity:
+                raise RuleValidationError(f"Invalid Semgrep severity in {path} at rule index {index}.")
+            result.append(RuleDefinition(
+                id=rule_id,
+                title=str(item.get("message") or rule_id),
+                severity=severity,
+                message=str(item.get("message") or "Semgrep security issue detected."),
+                recommendation="Review and remediate the insecure code or configuration pattern.",
+                engine="semgrep",
+                pattern="",
+                file_globs=["*"],
+                category=get_rule_category(rule_id),
+            ))
+    return result
 
 
 def run_rules(
@@ -455,6 +543,8 @@ def run_rules(
     classifications: Optional[Dict[str, Union[EnvClassification, tuple]]] = None,
     rules_dir: Optional[Path] = None,
     exceptions_file: Optional[Path] = None,
+    enable_semgrep: bool = False,
+    enable_gitleaks: bool = False,
 ) -> List[Finding]:
     """
     Entry point for running security detection rules against files in a project.
@@ -519,9 +609,12 @@ def run_rules(
 
     # Instantiate detectors
     regex_detector = RegexDetector(all_rules)
-    gitleaks_detector = GitleaksDetector(all_rules)
-    semgrep_detector = SemgrepDetector(all_rules)
-    detectors: List[Detector] = [regex_detector, gitleaks_detector, semgrep_detector]
+    detectors: List[Detector] = [regex_detector]
+    if enable_gitleaks:
+        detectors.append(GitleaksDetector(all_rules, scan_root=project_root))
+    if enable_semgrep:
+        semgrep_rules = load_semgrep_rules(DEFAULT_SEMGREP_RULES_DIR)
+        detectors.append(SemgrepDetector([*all_rules, *semgrep_rules], scan_root=project_root))
 
     findings: List[Finding] = []
     seen_dedupe: Set[tuple] = set()
@@ -590,8 +683,11 @@ def run_rules(
         for det in detectors:
             try:
                 raw_findings.extend(det.detect(full_path, content))
+            except DetectorExecutionError:
+                raise
             except Exception as e:
-                logger.warning(f"Detector {det.__class__.__name__} failed on {full_path}: {e}")
+                logger.warning("Detector %s failed (%s).", det.__class__.__name__, type(e).__name__)
+                raise DetectorExecutionError(f"{det.__class__.__name__} failed; scan is incomplete.") from None
 
         for rf in raw_findings:
             dedupe_key = (rf.rule_id, rel_key, rf.line)
@@ -627,12 +723,13 @@ def run_rules(
                 else:
                     final_severity = base_severity
             elif env_val == Environment.LOCAL_TESTING.value:
-                # local-testing: lower by at most one level, never suppress, never below low.
-                # Real secrets are never lowered
-                if rf.is_real_secret:
-                    final_severity = base_severity
-                else:
-                    final_severity = _lower_severity(base_severity)
+                final_severity = adjust_severity(
+                    base_severity,
+                    rf.category or get_rule_category(rf.rule_id),
+                    classification.environment,
+                    classification.confidence,
+                    is_real_secret=rf.is_real_secret,
+                )
             else:
                 # unknown: keep original severity, and append " (environment could not be determined)"
                 # to the message.
@@ -680,6 +777,7 @@ def run_rules(
                     environment=classification.environment,
                     confidence=classification.confidence,
                     recommendation=rf.recommendation,
+                    evidence=list(classification.evidence),
                 )
             )
 

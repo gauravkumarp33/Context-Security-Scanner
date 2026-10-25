@@ -95,11 +95,6 @@
           "default": "",
           "description": "Root directory containing the 'scanner' package (defaults to the repository root)."
         },
-        "securityScanner.cliPath": {
-          "type": "string",
-          "default": "code-security-scanner",
-          "description": "Path or executable name for the context security scanner CLI binary."
-        },
         "securityScanner.autoScanOnSave": {
           "type": "boolean",
           "default": true,
