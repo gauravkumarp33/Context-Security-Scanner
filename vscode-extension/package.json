@@ -107,6 +107,11 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically trigger a context security scan when a file is saved."
+        },
+        "securityScanner.showPanelOnScan": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the security scan results panel when a scan finds issues."
         }
       }
     }
@@ -115,7 +120,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node ./out/test/parse.test.js"
+    "test": "npm run compile && node ./out/test/parse.test.js && node ./out/test/resultsPanel.test.js"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

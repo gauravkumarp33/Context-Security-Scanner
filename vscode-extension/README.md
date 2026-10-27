@@ -12,7 +12,7 @@ npm run compile
 npm test
 ```
 
-Open this repository in VS Code, press F5, and run **Security Scanner: Scan Workspace**. Use **Security Scanner: Scan Current File** for a file scan. The status bar and activity bar tree show results; selecting a finding opens its file at the reported line.
+Open this repository in VS Code, press F5, and run **Security Scanner: Scan Workspace**. Use **Security Scanner: Scan Current File** for a file scan. Scans with findings open a results panel beside the editor. It groups findings by file, shows severity and environment counts, and offers quick filters. Select a file or finding to jump to its source line, or use **✖ Close** to dismiss the panel. The Output channel, status bar, activity bar tree, and Problems panel continue to show scan results.
 
 ## Settings
 
@@ -23,11 +23,12 @@ The CLI provider is the default. Configure Python and, for an extension developm
   "securityScanner.provider": "cli",
   "securityScanner.pythonPath": "C:\\path\\to\\.venv\\Scripts\\python.exe",
   "securityScanner.scannerRoot": "C:\\path\\to\\Context Security Scanner",
-  "securityScanner.autoScanOnSave": true
+  "securityScanner.autoScanOnSave": true,
+  "securityScanner.showPanelOnScan": true
 }
 ```
 
-`securityScanner.provider` also supports `mock` for previewing `mock/findings.mock.json`. The extension invokes `python -m scanner` without a shell. CLI JSON stays on stdout, scanner diagnostics go to stderr, and exit code 2 is treated as an incomplete scan.
+`securityScanner.provider` also supports `mock` for previewing `mock/findings.mock.json`. Set `securityScanner.showPanelOnScan` to `false` to keep automatic scans from opening the panel. The extension invokes `python -m scanner` without a shell. CLI JSON stays on stdout, scanner diagnostics go to stderr, and exit code 2 is treated as an incomplete scan.
 
 ## Privacy and limits
 

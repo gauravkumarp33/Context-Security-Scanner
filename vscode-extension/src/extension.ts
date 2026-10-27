@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { parseScanResult } from './parse';
 import { CliFindingsProvider, MockFindingsProvider } from './provider';
+import { ResultsPanel } from './resultsPanel';
 import { SecurityFindingsTreeProvider } from './tree';
 import { Finding, FindingsProvider, ScanResult, Severity } from './types';
 
@@ -260,13 +261,6 @@ export function spawnCliScan(
           return;
         }
 
-        if (code === 2) {
-          const diagnostic = stderr.trim() || 'Scanner reported an incomplete scan.';
-          outputChannel.appendLine(`[ERROR] ${diagnostic}`);
-          reject(new Error(diagnostic));
-          return;
-        }
-
         // Parse stdout only; non-zero exit code is not failure if stdout has valid JSON
         try {
           const scanResult = parseScanResult(stdout);
@@ -301,6 +295,15 @@ export function activate(context: vscode.ExtensionContext) {
   const outputChannel = vscode.window.createOutputChannel('Security Scanner');
   outputChannel.appendLine('[Security Scanner] Extension activated.');
   context.subscriptions.push(outputChannel);
+  const resultsPanel = new ResultsPanel();
+  context.subscriptions.push(resultsPanel);
+  const showPanelOnScan = (findings: Finding[], scanRoot: string, durationMs: number) => {
+    if (findings.length === 0) {
+      resultsPanel.dispose();
+    } else if (vscode.workspace.getConfiguration('securityScanner').get<boolean>('showPanelOnScan', true)) {
+      resultsPanel.show(findings, scanRoot, durationMs);
+    }
+  };
 
   // Diagnostic Collection
   const diagnosticCollection =
@@ -397,6 +400,8 @@ export function activate(context: vscode.ExtensionContext) {
           preview: false,
         });
 
+        editor.selection = new vscode.Selection(pos, pos);
+
         editor.revealRange(
           new vscode.Range(pos, pos),
           vscode.TextEditorRevealType.InCenter
@@ -436,6 +441,7 @@ export function activate(context: vscode.ExtensionContext) {
       outputChannel.appendLine(
         `\n[Security Scanner] Starting scan on workspace: ${scanRoot}`
       );
+      const startedAt = Date.now();
 
       try {
         const provider = getProvider();
@@ -475,6 +481,8 @@ export function activate(context: vscode.ExtensionContext) {
         statusBarItem.text = `$(shield) Security Scanner: ${activeFindings.length} finding(s)`;
         statusBarItem.tooltip = `Scan complete. Found ${activeFindings.length} issue(s). Click to re-run.`;
 
+        showPanelOnScan(activeFindings, scanRoot, Date.now() - startedAt);
+
         vscode.window.showInformationMessage(
           `Security Scanner: Scan completed. Found ${activeFindings.length} finding(s).`
         );
@@ -494,8 +502,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Command: Scan Single File (Feature 5)
   const scanSingleFile = async (documentUri: vscode.Uri) => {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    const activeFolder = workspaceFolders ? workspaceFolders[0] : undefined;
+    const activeFolder = vscode.workspace.getWorkspaceFolder(documentUri);
     const scanRoot = activeFolder ? path.resolve(activeFolder.uri.fsPath) : path.resolve(path.dirname(documentUri.fsPath));
 
     outputChannel.show(true);
@@ -503,11 +510,17 @@ export function activate(context: vscode.ExtensionContext) {
     outputChannel.appendLine(
       `[Security Scanner] Scanning single file: ${path.resolve(documentUri.fsPath)}`
     );
+    const startedAt = Date.now();
 
     try {
       const provider = getProvider();
       const scanResult = await provider.scanFile(documentUri, activeFolder);
-      const newFileFindings = scanResult.findings;
+      // A file scan's CLI paths may be relative to the scanner repository, not
+      // the open workspace. Keep the scanned URI as the source of truth.
+      const newFileFindings = scanResult.findings.map((finding) => ({
+        ...finding,
+        file: documentUri.fsPath,
+      }));
 
       // Update diagnostics for this specific file
       const fileDiagnostics = newFileFindings.map((f) => createDiagnostic(f));
@@ -533,6 +546,7 @@ export function activate(context: vscode.ExtensionContext) {
       outputChannel.appendLine(
         `[Security Scanner] Single-file scan completed for ${path.basename(documentUri.fsPath)}. Found ${newFileFindings.length} issue(s).`
       );
+      showPanelOnScan(newFileFindings, scanRoot, Date.now() - startedAt);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       outputChannel.appendLine(`[ERROR] Single-file scan failed: ${msg}`);
