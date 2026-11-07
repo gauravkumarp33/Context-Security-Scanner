@@ -12,6 +12,14 @@ The scanner discovers eligible files, applies security rules, and uses project c
 
 For example, Firebase configuration can identify a referenced rules file as deployed. A local fixture with the same insecure rule may receive a lower severity when there is enough local-testing evidence. A real secret keeps its severity when classified as local testing, and an unknown environment keeps the rule's base severity. If local-only and deployment evidence conflict, the scanner surfaces the conflict and raises severity.
 
+## Features at a glance
+
+- **Security checks** for exposed secrets, insecure code patterns, and risky configuration.
+- **Context-aware findings** with environment, confidence, evidence, and suggested fixes.
+- **VS Code scanning** for a workspace or the current file, with automatic scans on save, result filters, and jump-to-code navigation.
+- **CLI and CI scanning** with JSON or terminal reports, path exclusions, and severity thresholds for merge or deployment gates.
+- **Optional Semgrep and Gitleaks checks** alongside the built-in rules.
+
 ## Install the Python scanner
 
 Use Python 3.9 or later. Run these commands in a terminal with your preferred Python environment active:
@@ -30,10 +38,20 @@ The last command scans a bundled fixture so you can see a finding and its eviden
 Run the scanner against a project directory or a single file. Use `.` to scan the current directory.
 
 ```bash
+# Scan the current project and print a readable report
 code-security-scanner scan . --format human
-code-security-scanner scan path/to/file
+
+# Scan another project or a single file
+code-security-scanner scan "path/to/project" --format human
+code-security-scanner scan "path/to/project/app.py" --format human
+
+# Skip files matching these patterns
 code-security-scanner scan . --exclude "tests/*" "fixtures/*"
+
+# Save a JSON report to a file
 code-security-scanner scan . --format json -o scan-results.json
+
+# Return exit code 1 if any finding is high or critical
 code-security-scanner scan . --format human --fail-on high
 ```
 
@@ -57,7 +75,21 @@ An enabled detector that is missing or fails makes the scan incomplete and retur
 
 ## Install and use the VS Code extension
 
-Use VS Code 1.80 or later. Install the Python scanner first. If you already have a `.vsix` file, skip to the installation step below. To build one from this checkout, install Node.js and npm, then run:
+Use VS Code 1.80 or later and [install the Python scanner](#install-the-python-scanner) first.
+
+### Download and install the VSIX
+
+Look for `context-security-scanner-0.1.0.vsix` under **Assets** on [GitHub Releases](https://github.com/gauravkumarp33/Context-Security-Scanner/releases). If a package is available, download it and run this command from the folder where you saved it:
+
+```bash
+code --install-extension "context-security-scanner-0.1.0.vsix"
+```
+
+You can also open **Extensions** in VS Code, select the **…** menu, choose **Install from VSIX…**, and select the downloaded file. See the [VSIX installation instructions](https://code.visualstudio.com/docs/configure/extensions/extension-marketplace#_install-from-a-vsix).
+
+### Build the VSIX from source
+
+If there is no release asset, install Node.js and npm and run these commands from the repository root:
 
 ```bash
 cd vscode-extension
@@ -65,7 +97,9 @@ npm ci
 npx --yes @vscode/vsce package
 ```
 
-In VS Code, open **Extensions**, select the **…** menu, choose **Install from VSIX…**, and select the generated file. You can also run `code --install-extension context-security-scanner-0.1.0.vsix` from the directory containing the package. See the [VS Code packaging guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension) and [VSIX installation instructions](https://code.visualstudio.com/docs/configure/extensions/extension-marketplace#_install-from-a-vsix).
+Run the same installation command from `vscode-extension/` after the build. See the [VS Code packaging guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension).
+
+### Scan in VS Code
 
 Open the project you want to scan and use the Command Palette:
 
