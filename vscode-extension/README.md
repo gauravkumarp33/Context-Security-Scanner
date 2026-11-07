@@ -14,6 +14,15 @@ npm test
 
 Open this repository in VS Code, press F5, and run **Security Scanner: Scan Workspace**. Use **Security Scanner: Scan Current File** for a file scan. Scans with findings open a results panel beside the editor. It groups findings by file, shows severity and environment counts, and offers quick filters. Select a file or finding to jump to its source line, or use **✖ Close** to dismiss the panel. The Output channel, status bar, activity bar tree, and Problems panel continue to show scan results.
 
+## Quick Fixes
+
+After scanning a saved Python file, place the cursor on a scanner diagnostic and open **Quick Fix** from the lightbulb or with **Ctrl+.** (**Cmd+.** on macOS). Select the scanner action to edit the file. You can undo the change with the editor's normal Undo command.
+
+- **Read DEBUG from the environment (default: off)** replaces a simple top-level `DEBUG = True` assignment with an environment lookup and adds `import os` when needed and safe.
+- **Set shell=False** is available for supported subprocess calls with a simple literal argument list, such as `subprocess.run(["git", "status"], shell=True)`. Review the resulting command behavior before committing.
+
+The extension checks the current Python source before offering an edit. Calls using a variable or shell command string still show their original recommendation.
+
 ## Settings
 
 The CLI provider is the default. Configure Python and, for an extension development host, the scanner source root in VS Code settings:

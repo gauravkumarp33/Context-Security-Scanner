@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { parseScanResult } from './parse';
 import { CliFindingsProvider, MockFindingsProvider } from './provider';
+import { registerQuickFixes } from './quickFixes';
 import { ResultsPanel } from './resultsPanel';
 import { SecurityFindingsTreeProvider } from './tree';
 import { Finding, FindingsProvider, ScanResult, Severity } from './types';
@@ -309,6 +310,7 @@ export function activate(context: vscode.ExtensionContext) {
   const diagnosticCollection =
     vscode.languages.createDiagnosticCollection('security-scanner');
   context.subscriptions.push(diagnosticCollection);
+  context.subscriptions.push(registerQuickFixes(context));
 
   // Tree View Data Provider
   const treeDataProvider = new SecurityFindingsTreeProvider();

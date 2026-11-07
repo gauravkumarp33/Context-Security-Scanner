@@ -81,7 +81,7 @@ rules:
     message: "Application debug mode enabled in source code exposes internal stack traces, interactive debuggers, and sensitive server details."
     recommendation: "Set DEBUG = False or load the flag from an environment variable like os.getenv('DEBUG', 'False') == 'True'."
     engine: "regex"
-    pattern: '(?i)(?:^|[\s,;])DEBUG\s*=\s*True\b'
+    pattern: '(?i)(?:^|(?<=[\s,;]))DEBUG\s*=\s*True\b'
     file_globs:
       - "*.py"
       - "*.js"
